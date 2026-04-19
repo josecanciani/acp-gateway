@@ -11,6 +11,7 @@
  *   - Contains "slow"   -> waits 2 s before responding
  *   - Contains "multi"  -> sends two message chunks
  *   - Contains "permission" -> requests permission before responding
+ *   - Contains "file:"  -> creates a file and reports it via tool_call
  *   - Otherwise          -> replies with "mock-response"
  */
 import {
@@ -30,6 +31,8 @@ import {
 } from "@agentclientprotocol/sdk";
 import { Readable, Writable } from "node:stream";
 import crypto from "node:crypto";
+import { writeFileSync, mkdirSync } from "node:fs";
+import path from "node:path";
 
 function randomId(): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)))
@@ -52,7 +55,7 @@ function extractPromptText(prompt: PromptRequest["prompt"]): string {
 
 class MockAgent implements Agent {
   private connection: AgentSideConnection;
-  private sessions = new Map<string, { pendingPrompt: AbortController | null }>();
+  private sessions = new Map<string, { pendingPrompt: AbortController | null; cwd: string }>();
 
   constructor(connection: AgentSideConnection) {
     this.connection = connection;
@@ -65,9 +68,10 @@ class MockAgent implements Agent {
     };
   }
 
-  async newSession(_params: NewSessionRequest): Promise<NewSessionResponse> {
+  async newSession(params: NewSessionRequest): Promise<NewSessionResponse> {
     const sessionId = randomId();
-    this.sessions.set(sessionId, { pendingPrompt: null });
+    const cwd = ((params as Record<string, unknown>).cwd as string) ?? process.cwd();
+    this.sessions.set(sessionId, { pendingPrompt: null, cwd });
     return {
       sessionId,
       models: {
@@ -109,6 +113,27 @@ class MockAgent implements Agent {
       if (text.includes("multi")) {
         await this.sendText(params.sessionId, "chunk-1");
         await this.sendText(params.sessionId, "chunk-2");
+      } else if (text.includes("file:")) {
+        // Create a file in the session CWD and report via tool_call
+        const filename = text.split("file:")[1].trim().split(/\s/)[0] || "output.txt";
+        const filePath = path.join(session.cwd, filename);
+        mkdirSync(path.dirname(filePath), { recursive: true });
+        writeFileSync(filePath, `content of ${filename}`);
+
+        // Send tool_call update with location
+        await this.connection.sessionUpdate({
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: `call_${randomId().slice(0, 8)}`,
+            title: `Created ${filename}`,
+            kind: "edit",
+            status: "completed",
+            locations: [{ path: filePath }],
+          },
+        });
+
+        await this.sendText(params.sessionId, `created ${filename}`);
       } else if (text.includes("echo:")) {
         const echoText = text.split("echo:")[1].trim();
         await this.sendText(params.sessionId, echoText);

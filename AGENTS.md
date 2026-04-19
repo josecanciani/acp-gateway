@@ -18,8 +18,9 @@ acp-gateway/
     serve.ts              # Express app entry point (HTTP server, routes)
     router_handler.ts     # Core handler — converts OpenAI requests to ACP calls
     runtime.ts            # Spawns ACP agent subprocess, manages protocol lifecycle
-    client.ts             # ACP Client implementation (permissions, event queue)
+    client.ts             # ACP Client implementation (permissions, event queue, file tracking)
     registry.ts           # Model-to-adapter resolution
+    workspace.ts          # Per-conversation workspace manager (files, GC, artifacts)
     schemas.ts            # AgentSpec interface
     utils.ts              # Message formatting, content extraction, permission helpers
     adapters/
@@ -36,7 +37,8 @@ acp-gateway/
   test/
     registry.test.ts      # Unit tests for adapter resolution
     utils.test.ts         # Unit tests for message formatting and utilities
-    mock-agent.ts         # Mock ACP agent for testing (echoes, errors, permissions)
+    workspace.test.ts     # Unit tests for workspace manager
+    mock-agent.ts         # Mock ACP agent for testing (echoes, errors, permissions, files)
     integration/
       router.integration-test.ts  # HTTP endpoint integration tests
   tsconfig.json           # Build config (src → dist)
@@ -46,9 +48,10 @@ acp-gateway/
 ## Architecture
 
 - **`src/serve.ts`** is the entry point; creates the Express server, registers routes, and starts listening. Not imported by tests.
-- **`src/router_handler.ts`** converts OpenAI-compatible chat completion requests into ACP agent calls. Exposes `streaming()` (async generator) and `completion()` (returns full response). Tests import this.
-- **`src/runtime.ts`** spawns an ACP agent subprocess via `child_process.spawn`, establishes the ACP connection over stdio using the SDK's `ndJsonStream` and `ClientSideConnection`, manages the protocol lifecycle (initialize → newSession → unstable_setSessionModel → setSessionMode → prompt), and yields streaming chunks. Also exposes `discoverModels()` for querying an agent's available models.
-- **`src/client.ts`** implements the ACP `Client` interface. Handles `sessionUpdate` events (text chunks, finished signals), `requestPermission` (auto-allows by default), and provides an async event queue for consumers.
+- **`src/router_handler.ts`** converts OpenAI-compatible chat completion requests into ACP agent calls. Exposes `streaming()` (async generator), `streamingWithContext()` (workspace-aware), and `completion()` (returns full response). Tests import this.
+- **`src/runtime.ts`** spawns an ACP agent subprocess via `child_process.spawn`, establishes the ACP connection over stdio using the SDK's `ndJsonStream` and `ClientSideConnection`, manages the protocol lifecycle (initialize → newSession → unstable_setSessionModel → setSessionMode → prompt), and yields streaming chunks. Also exposes `runStreamWithClient()` (returns both stream and client) and `discoverModels()`.
+- **`src/client.ts`** implements the ACP `Client` interface. Handles `sessionUpdate` events (text chunks, finished signals), `requestPermission` (auto-allows by default), tracks file locations from `tool_call`/`tool_call_update` events, and provides an async event queue for consumers.
+- **`src/workspace.ts`** manages per-conversation workspace directories. Creates isolated temp dirs, materializes uploaded files (base64 images, attachments), provides token-based artifact access, and runs periodic garbage collection.
 - **`src/registry.ts`** resolves model names to adapters using multiple strategies: explicit `agent` param → `{agentId}/{modelId}` pattern → model name pattern (`acp/devin`, `acp-devin`) → aliases (`cognition`, `moonshot`) → default agent → first registered. Returns a `ResolvedRoute { adapter, modelId? }`. Also manages discovered models.
 - **`src/schemas.ts`** defines `AgentSpec` (with optional `modelId`) and `DiscoveredModel` interfaces.
 - **`src/adapters/static.ts`** is the base class for all concrete adapters. Builds an `AgentSpec` from a three-tier config: request optional_params → env vars → adapter defaults.
@@ -58,14 +61,17 @@ acp-gateway/
 ```
 HTTP POST /v1/chat/completions
   → Express handler (serve.ts)
-  → RouterHandler.streaming() or .completion() (router_handler.ts)
+  → WorkspaceManager.getOrCreate(conversationId) → workspace (workspace.ts)
+  → materializeFiles(messages) → write uploads to workspace dir
+  → RouterHandler.streamingWithContext() or .completion() (router_handler.ts)
   → Registry.resolve(model, optionalParams) → { adapter, modelId? } (registry.ts)
   → Adapter.buildSpec(optionalParams) → AgentSpec (adapters/static.ts)
-  → Runtime.runStream(spec, prompt, optionalParams, messages) (runtime.ts)
+  → Runtime.runStreamWithClient(spec, prompt, optionalParams, messages, cwd) (runtime.ts)
     → spawn(bin, args) → ACP connection over stdio
-    → initialize → newSession → [unstable_setSessionModel] → setSessionMode → prompt
+    → initialize → newSession(workspace.dir) → [unstable_setSessionModel] → setSessionMode → prompt
     → yield StreamChunk events from AgentClient queue
   → Express formats as SSE (streaming) or JSON (non-streaming)
+  → Emit artifact info (token, files) in response
 ```
 
 ### Permission Handling
@@ -75,10 +81,11 @@ When an agent requests permission, the client auto-allows by default (prefers `a
 ### Working Directory Resolution
 
 The runtime resolves the agent's CWD from (in priority order):
-1. Request `optional_params` (`cwd`, `workspace_path`, `project_root`, `root_dir`, `path`)
-2. `optional_params.metadata` (same keys)
-3. Paths extracted from message text (common parent of existing paths)
-4. Current process directory (fallback)
+1. Explicit `cwd` parameter (used by workspace integration — overrides all below)
+2. Request `optional_params` (`cwd`, `workspace_path`, `project_root`, `root_dir`, `path`)
+3. `optional_params.metadata` (same keys)
+4. Paths extracted from message text (common parent of existing paths)
+5. Current process directory (fallback)
 
 ## Scripts
 
@@ -122,7 +129,7 @@ npm run test:integration
 ```
 - Starts the Express server with a mock ACP agent adapter
 - Hits HTTP endpoints with real HTTP requests
-- Mock agent behavior is controlled by prompt text (`echo:`, `error`, `slow`, `multi`, `permission`)
+- Mock agent behavior is controlled by prompt text (`echo:`, `error`, `slow`, `multi`, `permission`, `file:`)
 - Test files use the `*.integration-test.ts` suffix (excluded from fast `test:node`)
 
 ## Configuration
@@ -134,6 +141,8 @@ npm run test:integration
 | `PORT`                      | HTTP server port                   | `4001`      |
 | `HOST`                      | HTTP server bind address           | `0.0.0.0`   |
 | `ROUTER_DEFAULT_AGENT`      | Default agent for unknown models   | `kimi`      |
+| `WORKSPACE_BASE_DIR`        | Base directory for workspaces      | `$TMPDIR/acp-workspaces` |
+| `WORKSPACE_TTL_MS`          | Workspace expiry (milliseconds)    | `3600000`   |
 | `DEVIN_BIN`                 | Path to Devin CLI binary           | `devin`     |
 | `DEVIN_ARGS`                | Custom arguments (space-separated) | `acp`       |
 | `DEVIN_MODE_ID`             | ACP session mode                   | *(none)*    |

@@ -25,6 +25,12 @@ export interface StreamChunk {
   usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null;
 }
 
+export interface RunStreamResult {
+  stream: AsyncGenerator<StreamChunk>;
+  /** The AgentClient instance; available for reading trackedFiles after stream completes. */
+  client: AgentClient;
+}
+
 export class Runtime {
   /** Discover available models by spawning an agent, doing the ACP handshake, and reading the session response. */
   async discoverModels(spec: AgentSpec): Promise<DiscoveredModel[]> {
@@ -151,19 +157,54 @@ export class Runtime {
     }
   }
 
+  /**
+   * Like runStream, but also exposes the AgentClient for post-stream inspection
+   * (e.g. reading trackedFiles after all chunks have been consumed).
+   */
+  runStreamWithClient(opts: {
+    spec: AgentSpec;
+    promptText: string;
+    optionalParams: Record<string, unknown>;
+    messages: Message[];
+    cwd?: string;
+  }): RunStreamResult {
+    const client = new AgentClient(
+      String(opts.optionalParams.permission_mode ?? "auto_allow")
+        .trim()
+        .toLowerCase(),
+    );
+    const stream = this.runStreamInternal({ ...opts, client });
+    return { stream, client };
+  }
+
   async *runStream(opts: {
     spec: AgentSpec;
     promptText: string;
     optionalParams: Record<string, unknown>;
     messages: Message[];
+    /** If provided, overrides all CWD resolution logic. */
+    cwd?: string;
   }): AsyncGenerator<StreamChunk> {
-    const { spec, promptText, optionalParams, messages } = opts;
-    const permissionMode = String(optionalParams.permission_mode ?? "auto_allow");
+    const client = new AgentClient(
+      String(opts.optionalParams.permission_mode ?? "auto_allow")
+        .trim()
+        .toLowerCase(),
+    );
+    yield* this.runStreamInternal({ ...opts, client });
+  }
 
-    const cwd = this.resolveCwd(optionalParams, messages);
+  private async *runStreamInternal(opts: {
+    spec: AgentSpec;
+    promptText: string;
+    optionalParams: Record<string, unknown>;
+    messages: Message[];
+    cwd?: string;
+    client: AgentClient;
+  }): AsyncGenerator<StreamChunk> {
+    const { spec, promptText, optionalParams, messages, client } = opts;
+
+    const cwd = opts.cwd ?? this.resolveCwd(optionalParams, messages);
     const mcpServers = (optionalParams.mcp_servers as unknown[]) ?? [];
-
-    const client = new AgentClient(permissionMode);
 
     // Spawn the agent process
     const agentProcess = spawn(spec.bin, spec.args, {

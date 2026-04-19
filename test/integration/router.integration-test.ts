@@ -9,15 +9,18 @@ import assert from "node:assert/strict";
 import { type Server } from "node:http";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { rmSync, createReadStream } from "node:fs";
 import express from "express";
 import { v4 as uuidv4 } from "uuid";
 import { Registry } from "../../src/registry.js";
 import { StaticAdapter } from "../../src/adapters/static.js";
 import { RouterHandler, type ChatCompletionRequest } from "../../src/router_handler.js";
 import { Runtime } from "../../src/runtime.js";
+import { WorkspaceManager } from "../../src/workspace.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MOCK_AGENT_PATH = join(__dirname, "..", "mock-agent.js");
+const TEST_WORKSPACE_DIR = join(__dirname, "..", ".test-integration-workspaces");
 
 /** Adapter that spawns the compiled mock agent instead of a real CLI */
 class MockAdapter extends StaticAdapter {
@@ -38,15 +41,17 @@ let server: Server;
 let baseUrl: string;
 let handler: RouterHandler;
 let registry: Registry;
+let workspaces: WorkspaceManager;
 
 async function startServer(): Promise<void> {
   const app = express();
-  app.use(express.json());
+  app.use(express.json({ limit: "50mb" }));
 
   registry = new Registry("mock");
   const mockAdapter = new MockAdapter();
   registry.register(mockAdapter);
-  handler = new RouterHandler(registry);
+  workspaces = new WorkspaceManager(TEST_WORKSPACE_DIR, 60_000);
+  handler = new RouterHandler(registry, workspaces);
 
   // Discover models from mock agent (like serve.ts does)
   const runtime = new Runtime();
@@ -76,13 +81,18 @@ async function startServer(): Promise<void> {
 
   app.post("/v1/chat/completions", async (req, res) => {
     const body = req.body as ChatCompletionRequest;
+    const conversationId =
+      (req.headers["x-conversation-id"] as string) ?? (body.conversation_id as string) ?? undefined;
+
     try {
       if (body.stream) {
         res.setHeader("Content-Type", "text/event-stream");
         res.setHeader("Cache-Control", "no-cache");
         res.setHeader("Connection", "keep-alive");
         const model = body.model ?? "acp/mock";
-        for await (const chunk of handler.streaming(body)) {
+        const { chunks, context } = handler.streamingWithContext(body, conversationId);
+        res.setHeader("X-Conversation-Id", context.conversationId);
+        for await (const chunk of chunks) {
           const sseData = {
             id: `chatcmpl-${uuidv4()}`,
             created: Math.floor(Date.now() / 1000),
@@ -99,7 +109,8 @@ async function startServer(): Promise<void> {
         res.write("data: [DONE]\n\n");
         res.end();
       } else {
-        const response = await handler.completion(body);
+        const response = await handler.completion(body, conversationId);
+        res.setHeader("X-Conversation-Id", response.conversation_id ?? "");
         res.json(response);
       }
     } catch (err) {
@@ -110,6 +121,41 @@ async function startServer(): Promise<void> {
         },
       });
     }
+  });
+
+  // Artifact endpoints
+  app.get("/v1/artifacts/:token", (req, res) => {
+    const ws = workspaces.getByToken(req.params.token);
+    if (!ws) {
+      res
+        .status(404)
+        .json({ error: { message: "Workspace not found or expired", type: "not_found" } });
+      return;
+    }
+    const files = workspaces.listFiles(ws);
+    res.json({ conversation_id: ws.conversationId, files, base_url: `/v1/artifacts/${ws.token}` });
+  });
+
+  app.get("/v1/artifacts/:token{/*filepath}", (req, res) => {
+    const ws = workspaces.getByToken(req.params.token);
+    if (!ws) {
+      res
+        .status(404)
+        .json({ error: { message: "Workspace not found or expired", type: "not_found" } });
+      return;
+    }
+    const filePath = (req.params as unknown as Record<string, string | string[]>).filepath;
+    const resolvedPath = Array.isArray(filePath) ? filePath.join("/") : (filePath ?? "");
+    if (!resolvedPath) {
+      res.status(400).json({ error: { message: "File path required", type: "bad_request" } });
+      return;
+    }
+    const resolved = workspaces.resolveFilePath(ws, resolvedPath);
+    if (!resolved) {
+      res.status(404).json({ error: { message: "File not found", type: "not_found" } });
+      return;
+    }
+    createReadStream(resolved).pipe(res);
   });
 
   app.get("/health", (_req, res) => res.json({ status: "ok" }));
@@ -127,6 +173,7 @@ async function startServer(): Promise<void> {
 
 function stopServer(): void {
   server?.close();
+  rmSync(TEST_WORKSPACE_DIR, { recursive: true, force: true });
 }
 
 describe("ACP Router HTTP endpoints", () => {
@@ -294,5 +341,99 @@ describe("ACP Router HTTP endpoints", () => {
     assert.ok(typeof body.created === "number");
     assert.ok(Array.isArray(body.choices));
     assert.ok(typeof body.usage === "object");
+  });
+
+  it("returns conversation_id in response", async () => {
+    const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "acp-mock",
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    });
+    const body = (await res.json()) as Record<string, unknown>;
+    assert.ok(typeof body.conversation_id === "string");
+    assert.ok((body.conversation_id as string).length > 0);
+    // Also check response header
+    assert.ok(res.headers.get("x-conversation-id"));
+  });
+
+  it("reuses workspace when conversation_id is sent back", async () => {
+    // First request - get conversation ID
+    const res1 = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "acp-mock",
+        messages: [{ role: "user", content: "echo: first" }],
+      }),
+    });
+    const body1 = (await res1.json()) as Record<string, unknown>;
+    const convId = body1.conversation_id as string;
+
+    // Second request - reuse conversation
+    const res2 = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Conversation-Id": convId,
+      },
+      body: JSON.stringify({
+        model: "acp-mock",
+        messages: [{ role: "user", content: "echo: second" }],
+      }),
+    });
+    const body2 = (await res2.json()) as Record<string, unknown>;
+    assert.equal(body2.conversation_id, convId);
+  });
+
+  it("agent creates files visible via artifact endpoint", async () => {
+    const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "acp-mock",
+        messages: [{ role: "user", content: "file: hello.txt" }],
+      }),
+    });
+    const body = (await res.json()) as Record<string, unknown>;
+
+    assert.ok(body.artifacts, "expected artifacts in response");
+    const artifacts = body.artifacts as { token: string; files: string[]; base_url: string };
+    assert.ok(artifacts.token);
+    assert.ok(
+      artifacts.files.includes("hello.txt"),
+      `expected hello.txt in ${JSON.stringify(artifacts.files)}`,
+    );
+
+    // Fetch the file via artifact endpoint
+    const fileRes = await fetch(`${baseUrl}${artifacts.base_url}/hello.txt`);
+    assert.equal(fileRes.status, 200);
+    const content = await fileRes.text();
+    assert.equal(content, "content of hello.txt");
+  });
+
+  it("artifact endpoint returns 404 for invalid token", async () => {
+    const res = await fetch(`${baseUrl}/v1/artifacts/nonexistent`);
+    assert.equal(res.status, 404);
+  });
+
+  it("artifact endpoint prevents directory traversal", async () => {
+    // First create a workspace with a file
+    const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "acp-mock",
+        messages: [{ role: "user", content: "file: safe.txt" }],
+      }),
+    });
+    const body = (await res.json()) as Record<string, unknown>;
+    const artifacts = body.artifacts as { token: string; base_url: string };
+
+    // Try to escape workspace directory
+    const traversalRes = await fetch(`${baseUrl}${artifacts.base_url}/../../../etc/passwd`);
+    assert.equal(traversalRes.status, 404);
   });
 });

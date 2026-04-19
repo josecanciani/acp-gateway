@@ -5,6 +5,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Per-conversation workspace support: file uploads from OpenAI-compatible clients are materialized into workspace directories.
+- `GET /v1/artifacts/:token` endpoint to list files created by the agent during a conversation.
+- `GET /v1/artifacts/:token/*filepath` endpoint to download individual workspace files.
+- `X-Conversation-Id` header and `conversation_id` body param for conversation continuity.
+- `WorkspaceManager` module (`src/workspace.ts`) for workspace lifecycle management with automatic GC.
+- File tracking from ACP `tool_call` and `tool_call_update` events (`TrackedFile` in client).
+- `WORKSPACE_BASE_DIR` and `WORKSPACE_TTL_MS` environment variables.
+
+### Changed
+- JSON body size limit increased from 10 MB to 50 MB to support file uploads.
+- Non-streaming responses now include `conversation_id` and `artifacts` fields.
+- Streaming responses emit artifact metadata as a final SSE event before `[DONE]`.
+- `Runtime.runStreamWithClient()` exposes both stream and client for post-stream file tracking.
 
 ## [1.2.0] - 2026-04-19
 ### Added

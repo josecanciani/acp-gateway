@@ -69,8 +69,28 @@ print(response.choices[0].message.content)
 | `GET` | `/health` | Health check |
 | `GET` | `/v1/models` | List available models |
 | `POST` | `/v1/chat/completions` | Chat completion (streaming and non-streaming) |
+| `GET` | `/v1/artifacts/:token` | List files in a conversation workspace |
+| `GET` | `/v1/artifacts/:token/*filepath` | Download a workspace file |
 
 See [docs/api.md](docs/api.md) for full request/response schemas.
+
+## Workspaces & Artifacts
+
+Each conversation gets an isolated workspace directory. Files uploaded via base64 `image_url` data URIs or attachments are automatically materialized into this workspace, and the agent's CWD is set to it. Files created by the agent are also accessible after the response completes.
+
+**Conversation ID** — pass `X-Conversation-Id` header or `conversation_id` body param to maintain conversation continuity across requests. The response includes the `X-Conversation-Id` header and (for non-streaming) the `conversation_id` field.
+
+**Artifacts** — after a response completes, the `artifacts` field (or a final SSE event in streaming mode) provides a token-based URL for accessing workspace files:
+
+```bash
+# List files in workspace
+curl http://localhost:4001/v1/artifacts/<token>
+
+# Download a specific file
+curl http://localhost:4001/v1/artifacts/<token>/path/to/file.py
+```
+
+Workspaces are automatically garbage-collected after 1 hour of inactivity (configurable via `WORKSPACE_TTL_MS`).
 
 ## Model Routing
 
@@ -110,6 +130,8 @@ Set `ROUTER_DEFAULT_AGENT` to choose the fallback agent for unrecognized model n
 | `PORT` | HTTP server port | `4001` |
 | `HOST` | HTTP server bind address | `0.0.0.0` |
 | `ROUTER_DEFAULT_AGENT` | Default agent for unknown models | `kimi` |
+| `WORKSPACE_BASE_DIR` | Base directory for conversation workspaces | `$TMPDIR/acp-workspaces` |
+| `WORKSPACE_TTL_MS` | Workspace expiry time in milliseconds | `3600000` (1 hour) |
 
 ### Adapter Settings
 
@@ -163,8 +185,9 @@ src/
   serve.ts          Express app entry point (HTTP server, routes)
   router_handler.ts Core handler — converts OpenAI requests to ACP calls
   runtime.ts        Spawns ACP agent subprocess, manages protocol lifecycle
-  client.ts         ACP Client — permission handling, event queue
+  client.ts         ACP Client — permission handling, event queue, file tracking
   registry.ts       Model-to-adapter resolution
+  workspace.ts      Per-conversation workspace manager (files, GC, artifacts)
   schemas.ts        AgentSpec interface
   utils.ts          Message formatting, content extraction, path helpers
   adapters/

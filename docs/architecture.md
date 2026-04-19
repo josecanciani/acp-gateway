@@ -11,14 +11,17 @@ acp-gateway is a TypeScript HTTP server that translates [OpenAI-compatible](http
 ```
 HTTP POST /v1/chat/completions
   -> Express handler (serve.ts)
-  -> RouterHandler.streaming() or .completion() (router_handler.ts)
+  -> WorkspaceManager.getOrCreate(conversationId) -> workspace dir (workspace.ts)
+  -> WorkspaceManager.materializeFiles(messages) -> write uploads to workspace
+  -> RouterHandler.streamingWithContext(body, workspace) (router_handler.ts)
   -> Registry.resolve(model, optionalParams) -> { adapter, modelId? } (registry.ts)
   -> Adapter.buildSpec(optionalParams) -> AgentSpec (adapters/static.ts)
-  -> Runtime.runStream(spec, prompt, optionalParams, messages) (runtime.ts)
+  -> Runtime.runStreamWithClient(spec, prompt, optionalParams, messages, cwd) (runtime.ts)
      -> spawn(bin, args) -> ACP connection over stdio
-     -> initialize -> newSession -> [unstable_setSessionModel] -> setSessionMode -> prompt
+     -> initialize -> newSession(workspace.dir) -> [unstable_setSessionModel] -> setSessionMode -> prompt
      -> yield StreamChunk events from AgentClient queue
   -> Express formats as SSE (streaming) or JSON (non-streaming)
+  -> Emit artifact info (token, files) in response
 ```
 
 ## Module Responsibilities
@@ -29,17 +32,20 @@ Creates the Express application, registers adapters, and starts the HTTP server.
 
 - Registers `KimiAdapter` and `DevinAdapter` into a `Registry`
 - Triggers background model discovery for all adapters on startup
-- Exposes three endpoints: `GET /v1/models`, `POST /v1/chat/completions`, `GET /health`
+- Exposes endpoints: `GET /v1/models`, `POST /v1/chat/completions`, `GET /health`, `GET /v1/artifacts/:token`, `GET /v1/artifacts/:token/*filepath`
 - `/v1/models` returns both base adapter models and dynamically discovered per-agent models
-- Formats streaming responses as SSE with OpenAI-compatible JSON payloads
-- Formats non-streaming responses as a single `ChatCompletionResponse`
+- Manages conversation IDs via `X-Conversation-Id` header or `conversation_id` body param
+- Formats streaming responses as SSE with OpenAI-compatible JSON payloads (plus artifact metadata)
+- Formats non-streaming responses as a single `ChatCompletionResponse` (plus `conversation_id` and `artifacts`)
+- Runs periodic workspace garbage collection (every 10 minutes)
 
 ### router_handler.ts (request handler)
 
 Converts incoming HTTP request bodies into ACP agent invocations.
 
 - `streaming(body)` -- async generator that yields `StreamChunk` objects
-- `completion(body)` -- collects all chunks and returns a `ChatCompletionResponse`
+- `streamingWithContext(body, workspace)` -- integrates workspace, returns stream + artifact context
+- `completion(body)` -- collects all chunks and returns a `ChatCompletionResponse` with `conversation_id` and `artifacts`
 - Resolves the adapter and optional model ID via `Registry`, builds an `AgentSpec` (with `modelId` if specified), converts messages to a prompt string, and delegates to `Runtime`
 
 ### runtime.ts (agent lifecycle)
@@ -53,14 +59,17 @@ Spawns the agent subprocess, establishes the ACP connection, runs the protocol h
 5. **Prompt** -- sends the user prompt and polls the client event queue for text chunks
 6. **Cleanup** -- kills the agent process in a `finally` block
 
-The runtime also exposes `discoverModels(spec)` which spawns an agent, performs the ACP handshake, reads available models from the `configOptions` field in the `newSession` response, and returns a list of `DiscoveredModel` objects.
+The runtime also exposes:
+- `runStreamWithClient(spec, prompt, optionalParams, messages, cwd?)` -- returns both the stream and the `AgentClient` instance (for post-stream file tracking)
+- `discoverModels(spec)` -- spawns an agent, performs the ACP handshake, reads available models from the `configOptions` field in the `newSession` response, and returns a list of `DiscoveredModel` objects
 
 ### client.ts (ACP client)
 
-Implements the ACP SDK `Client` interface. Handles two responsibilities:
+Implements the ACP SDK `Client` interface. Handles three responsibilities:
 
 - **Event queue** -- `sessionUpdate` events push text chunks into a queue; consumers pull them with `pullEvent(timeoutMs)`. This decouples the ACP connection from the HTTP response stream.
 - **Permission handling** -- `requestPermission` auto-allows by default, preferring `allow_always` over `allow_once`. If no allow option is available, the request is cancelled.
+- **File tracking** -- `tool_call` and `tool_call_update` events with `locations` are tracked in `trackedFiles: TrackedFile[]`. After the stream completes, consumers can inspect which files the agent created or modified.
 
 ### registry.ts (model routing)
 
@@ -120,14 +129,44 @@ interface DiscoveredModel {
 }
 ```
 
+### workspace.ts (workspace manager)
+
+Manages per-conversation workspace directories for file materialization and artifact serving.
+
+- `getOrCreate(conversationId?)` -- creates or retrieves a workspace directory with a unique token
+- `materializeFiles(workspace, messages)` -- extracts base64 `image_url` data URIs and file attachments from OpenAI messages, writes them to the workspace directory
+- `listFiles(workspace)` -- recursively lists all files in a workspace
+- `resolveFilePath(workspace, relativePath)` -- safely resolves a relative path with directory traversal prevention
+- `getByToken(token)` -- looks up a workspace by its security token (for artifact endpoints)
+- `gc()` -- removes workspaces that have exceeded the configured TTL
+
+Each workspace has: `conversationId`, `token` (random hex for secure URL access), `dir` (filesystem path), `createdAt`, `lastAccessedAt`.
+
+## Workspace & Artifact Flow
+
+```
+1. Client sends POST /v1/chat/completions with X-Conversation-Id (or new)
+2. WorkspaceManager.getOrCreate() → creates temp dir + token
+3. materializeFiles() → base64 images/attachments written to workspace
+4. Runtime spawns agent with CWD = workspace dir
+5. Agent creates files → tracked via tool_call events in AgentClient
+6. Response includes conversation_id + artifacts { token, files[] }
+7. Client fetches GET /v1/artifacts/:token → file listing
+8. Client fetches GET /v1/artifacts/:token/path → file download
+9. Periodic GC (every 10 min) removes expired workspaces
+```
+
 ## Working Directory Resolution
 
 The runtime resolves the agent's working directory from (in priority order):
 
-1. Request `optional_params` keys: `cwd`, `workspace_path`, `project_root`, `root_dir`, `path`
-2. `optional_params.metadata` (same keys)
-3. Paths extracted from message text (common parent of existing paths)
-4. `process.cwd()` (fallback)
+1. **Explicit `cwd` parameter** passed to `runStream`/`runStreamWithClient` (used by workspace integration)
+2. Request `optional_params` keys: `cwd`, `workspace_path`, `project_root`, `root_dir`, `path`
+3. `optional_params.metadata` (same keys)
+4. Paths extracted from message text (common parent of existing paths)
+5. `process.cwd()` (fallback)
+
+When a workspace is active, the workspace directory is passed as the explicit `cwd`, overriding all other resolution logic.
 
 ## Permission Handling
 

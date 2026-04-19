@@ -142,3 +142,44 @@ response = client.chat.completions.create(
 )
 print(response.choices[0].message.content)
 ```
+
+---
+
+### GET /v1/artifacts/:token
+
+List all files in a conversation workspace.
+
+**Response:**
+
+```json
+{
+  "files": ["output.py", "data/results.json"]
+}
+```
+
+Returns `404` if the token is invalid or the workspace has expired.
+
+---
+
+### GET /v1/artifacts/:token/*filepath
+
+Download a specific file from a conversation workspace.
+
+**Response:** The raw file content with an appropriate `Content-Type` header.
+
+Returns `404` if the token is invalid, the file does not exist, or the path attempts directory traversal.
+
+---
+
+## Conversation Continuity
+
+Use the `X-Conversation-Id` header or `conversation_id` body field to maintain workspace state across multiple requests in the same conversation.
+
+| Mechanism | Direction | Description |
+|-----------|-----------|-------------|
+| `X-Conversation-Id` header | Request | Pass an existing conversation ID to reuse a workspace |
+| `conversation_id` body field | Request | Alternative to the header |
+| `X-Conversation-Id` header | Response | Always returned — use for subsequent requests |
+| `conversation_id` field | Response (non-streaming) | Included in the JSON response body |
+| `artifacts` field | Response (non-streaming) | `{ token, files[] }` for accessing workspace files |
+| Final SSE event | Response (streaming) | Artifact metadata emitted before `[DONE]` |

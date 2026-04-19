@@ -11,6 +11,12 @@ export interface TextEvent {
   text: string;
 }
 
+export interface TrackedFile {
+  path: string;
+  kind: string;
+  toolCallId: string;
+}
+
 /**
  * ACP Client implementation that handles agent communication.
  * Port of the Python AgentClient class.
@@ -21,6 +27,8 @@ export class AgentClient implements Client {
   finalTextParts: string[] = [];
   suppressStream = false;
   permissionMode: string;
+  /** Files touched by tool calls during this session. */
+  trackedFiles: TrackedFile[] = [];
 
   constructor(permissionMode = "auto_allow") {
     this.permissionMode = permissionMode.trim().toLowerCase();
@@ -100,6 +108,11 @@ export class AgentClient implements Client {
         this.finalTextParts.push(text);
         this.pushEvent({ kind: "assistant_text", text });
       }
+      return;
+    }
+
+    if (updateKind === "tool_call" || updateKind === "tool_call_update") {
+      this.trackLocations(update);
     }
   }
 
@@ -142,6 +155,22 @@ export class AgentClient implements Client {
 
   getFinalText(): string {
     return this.finalTextParts.join("").trim();
+  }
+
+  /** Extract file locations from tool_call or tool_call_update events. */
+  private trackLocations(update: Record<string, unknown>): void {
+    const toolCallId = String(update.toolCallId ?? "");
+    const kind = String(update.kind ?? "other");
+    const locations = update.locations as Array<{ path?: string }> | undefined;
+    if (!Array.isArray(locations)) return;
+
+    for (const loc of locations) {
+      const p = typeof loc?.path === "string" ? loc.path.trim() : "";
+      if (!p) continue;
+      // Avoid duplicates
+      if (this.trackedFiles.some((f) => f.path === p && f.toolCallId === toolCallId)) continue;
+      this.trackedFiles.push({ path: p, kind, toolCallId });
+    }
   }
 
   /** Handle vendor-specific notifications (e.g. _cognition.ai/agent_stopped). */
