@@ -24,6 +24,7 @@ async function discoverAllModels(): Promise<void> {
     try {
       const spec = adapter.buildSpec({});
       const models = await runtime.discoverModels(spec);
+      registry.markAvailable(adapter.agentId);
       if (models.length > 0) {
         registry.setModels(adapter.agentId, models);
         console.log(
@@ -34,17 +35,12 @@ async function discoverAllModels(): Promise<void> {
       // Agent not available — skip silently
     }
   }
+  registry.discoveryDone = true;
 }
 
 // GET /v1/models - list available models
 app.get("/v1/models", (_req, res) => {
   const discoveredModels = registry.listAllModels();
-  const adapterModels = registry.listAdapters().map((a) => ({
-    id: `acp/${a.agentId}`,
-    object: "model" as const,
-    created: 1677610602,
-    owned_by: "acp-gateway",
-  }));
   const agentModels = discoveredModels.map((m) => ({
     id: m.id,
     object: "model" as const,
@@ -52,7 +48,19 @@ app.get("/v1/models", (_req, res) => {
     owned_by: `acp-gateway:${m.agentId}`,
   }));
 
-  res.json({ data: [...adapterModels, ...agentModels], object: "list" });
+  // Only show generic acp/{agentId} entries for adapters with no discovered models
+  const agentIdsWithModels = new Set(discoveredModels.map((m) => m.agentId));
+  const fallbackModels = registry
+    .listAdapters()
+    .filter((a) => !agentIdsWithModels.has(a.agentId))
+    .map((a) => ({
+      id: `acp/${a.agentId}`,
+      object: "model" as const,
+      created: 1677610602,
+      owned_by: "acp-gateway",
+    }));
+
+  res.json({ data: [...fallbackModels, ...agentModels], object: "list" });
 });
 
 // POST /v1/chat/completions - main endpoint

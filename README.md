@@ -1,6 +1,6 @@
 # acp-gateway
 
-A lightweight TypeScript gateway that exposes OpenAI-compatible `/v1/chat/completions` endpoints and routes requests to [Agent Client Protocol](https://agentclientprotocol.org/) (ACP) agents like Devin and Kimi. Supports streaming (SSE) and non-streaming responses, pluggable adapters, and automatic permission handling.
+A lightweight TypeScript gateway that exposes OpenAI-compatible `/v1/chat/completions` endpoints and routes requests to [Agent Client Protocol](https://agentclientprotocol.org/) (ACP) agents like Devin and Kimi. Each request spawns a fresh agent CLI process, communicates over stdio using the ACP protocol, and kills the process when the response completes. Supports streaming (SSE) and non-streaming responses, pluggable adapters, and automatic permission handling.
 
 ## Features
 
@@ -184,6 +184,20 @@ test/
   integration/      HTTP endpoint integration tests
 ```
 
+## Demo UI
+
+You can launch [Open WebUI](https://github.com/open-webui/open-webui) via Docker for a ChatGPT-like demo interface:
+
+```bash
+# Start the gateway first
+npm run dev
+
+# In another terminal, start Open WebUI (requires Docker)
+npm run demo:ui
+```
+
+Open http://localhost:3000, then select an `acp/*` model to start chatting.
+
 ## Development
 
 ```bash
@@ -196,6 +210,7 @@ npm run test:node        # Unit tests only
 npm run test:integration # Integration tests only
 npm run test             # Lint + format check + unit tests
 npm run test:all         # All of the above + integration tests
+npm run demo:ui          # Open WebUI via Docker (port 3000)
 ```
 
 ## Credits

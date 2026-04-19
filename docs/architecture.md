@@ -44,7 +44,7 @@ Converts incoming HTTP request bodies into ACP agent invocations.
 
 ### runtime.ts (agent lifecycle)
 
-Spawns the agent subprocess, establishes the ACP connection, runs the protocol handshake, and streams results.
+Spawns the agent subprocess, establishes the ACP connection, runs the protocol handshake, and streams results. **A fresh process is spawned for every request and killed when the response completes** — there is no connection pooling or process reuse.
 
 1. **Spawn** -- `child_process.spawn(bin, args)` with stdio pipes
 2. **Connect** -- converts Node streams to Web streams, creates `ndJsonStream` and `ClientSideConnection`
@@ -53,7 +53,7 @@ Spawns the agent subprocess, establishes the ACP connection, runs the protocol h
 5. **Prompt** -- sends the user prompt and polls the client event queue for text chunks
 6. **Cleanup** -- kills the agent process in a `finally` block
 
-The runtime also exposes `discoverModels(spec)` which spawns an agent, performs the ACP handshake, reads the `models.availableModels` field from the `newSession` response, and returns a list of `DiscoveredModel` objects.
+The runtime also exposes `discoverModels(spec)` which spawns an agent, performs the ACP handshake, reads available models from the `configOptions` field in the `newSession` response, and returns a list of `DiscoveredModel` objects.
 
 ### client.ts (ACP client)
 

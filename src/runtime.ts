@@ -38,7 +38,7 @@ export class Runtime {
       setTimeout(() => resolve(null), 200);
     });
 
-    if (spawnError) return [];
+    if (spawnError) throw new Error(`Agent binary "${spec.bin}" not found: ${spawnError.message}`);
 
     try {
       const input = Writable.toWeb(agentProcess.stdin!) as WritableStream<Uint8Array>;
@@ -53,10 +53,31 @@ export class Runtime {
       });
 
       const session = await conn.newSession({ cwd: process.cwd(), mcpServers: [] });
-      const models = (session as Record<string, unknown>).models as
+      const sessionData = session as Record<string, unknown>;
+
+      // Try configOptions (ACP agents expose models as a "model" config option)
+      const configOptions = sessionData.configOptions as
+        | Array<{
+            id?: string;
+            category?: string;
+            options?: Array<{ value: string; name: string; description?: string }>;
+          }>
+        | undefined;
+      const modelConfig = configOptions?.find(
+        (opt) => opt.category === "model" || opt.id === "model",
+      );
+      if (modelConfig?.options?.length) {
+        return modelConfig.options.map((o) => ({
+          modelId: o.value,
+          name: o.name,
+          description: o.description,
+        }));
+      }
+
+      // Fallback: legacy models.availableModels field
+      const models = sessionData.models as
         | { availableModels?: Array<{ modelId: string; name: string; description?: string }> }
         | undefined;
-
       if (!models?.availableModels?.length) return [];
 
       return models.availableModels.map((m) => ({

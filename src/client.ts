@@ -143,4 +143,9 @@ export class AgentClient implements Client {
   getFinalText(): string {
     return this.finalTextParts.join("").trim();
   }
+
+  /** Handle vendor-specific notifications (e.g. _cognition.ai/agent_stopped). */
+  async extNotification(_method: string, _params: Record<string, unknown>): Promise<void> {
+    // Silently ignore unknown notifications
+  }
 }

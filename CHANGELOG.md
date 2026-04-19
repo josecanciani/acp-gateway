@@ -6,6 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-04-19
+### Added
+- `npm run demo:ui` script to launch Open WebUI via Docker for demos.
+
+### Changed
+- `/v1/models` no longer shows generic `acp/{agentId}` entries when per-model entries are discovered (e.g. `devin/claude-opus-4-6-thinking` instead of `acp/devin`).
+- `/v1/models` only lists agents whose CLI binary is actually installed.
+
+### Fixed
+- Model discovery now reads from ACP `configOptions` response (was looking for a non-existent `models.availableModels` field).
+- `_cognition.ai/agent_stopped` notification no longer logs "Method not found" errors (added `extNotification` handler to `AgentClient`).
+- `discoverModels` now properly throws when agent binary is unreachable instead of silently returning empty.
+
 ## [1.1.0] - 2026-04-19
 ### Added
 - `keep-a-changelog` dev dependency for changelog validation and formatting.
@@ -35,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README module descriptions corrected (`schemas.ts` is a TypeScript interface, not Zod; `client.ts` handles permissions/events, not subprocess spawning).
 - `.npmignore` now excludes `src/`, `dist-test/`, `tsconfig.test.json`, and `docs/` from published package.
 
-[Unreleased]: https://github.com/josecanciani/acp-gateway/compare/1.1.0...HEAD
+[Unreleased]: https://github.com/josecanciani/acp-gateway/compare/1.2.0...HEAD
+[1.2.0]: https://github.com/josecanciani/acp-gateway/compare/1.1.0...1.2.0
 [1.1.0]: https://github.com/josecanciani/acp-gateway/compare/1.0.1...1.1.0
 [1.0.1]: https://github.com/josecanciani/acp-gateway/releases/tag/1.0.1

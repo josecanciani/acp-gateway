@@ -94,6 +94,7 @@ The runtime resolves the agent's CWD from (in priority order):
 | `npm run typecheck`      | Type-check with tsc                      |
 | `npm run changelog`      | Parse and reformat CHANGELOG.md          |
 | `npm run changelog:check`| Validate CHANGELOG.md silently           |
+| `npm run demo:ui`        | Open WebUI via Docker (port 3000)        |
 
 ## Verification
 

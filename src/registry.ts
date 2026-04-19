@@ -9,6 +9,8 @@ export interface ResolvedRoute {
 export class Registry {
   private adapters = new Map<string, Adapter>();
   private modelCache = new Map<string, DiscoveredModel[]>();
+  private availableAgents = new Set<string>();
+  discoveryDone = false;
   defaultAgent: string;
 
   constructor(defaultAgent = "kimi") {
@@ -62,9 +64,20 @@ export class Registry {
     return result;
   }
 
-  /** List all registered adapters. */
+  /** Mark an agent as available (reachable during discovery). */
+  markAvailable(agentId: string): void {
+    this.availableAgents.add(agentId.trim().toLowerCase());
+  }
+
+  /** Check if an agent was found available during discovery. */
+  isAvailable(agentId: string): boolean {
+    return this.availableAgents.has(agentId.trim().toLowerCase());
+  }
+
+  /** List all registered adapters. If discovery has completed, only return available ones. */
   listAdapters(): Adapter[] {
-    return [...this.adapters.values()];
+    if (!this.discoveryDone) return [...this.adapters.values()];
+    return [...this.adapters.values()].filter((a) => this.availableAgents.has(a.agentId));
   }
 
   resolve(model: string, optionalParams: Record<string, unknown>): ResolvedRoute {

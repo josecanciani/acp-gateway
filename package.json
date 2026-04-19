@@ -1,6 +1,6 @@
 {
   "name": "acp-gateway",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "An OpenAI-compatible API gateway that routes chat completion requests to ACP agents.",
   "type": "module",
   "main": "dist/serve.js",
@@ -20,7 +20,8 @@
     "format:check": "oxfmt --check 'src/**/*.ts' 'test/**/*.ts'",
     "typecheck": "tsc --noEmit",
     "changelog": "npx keep-a-changelog --no-v-prefix --url https://github.com/josecanciani/acp-gateway",
-    "changelog:check": "npx keep-a-changelog --no-v-prefix --url https://github.com/josecanciani/acp-gateway --quiet"
+    "changelog:check": "npx keep-a-changelog --no-v-prefix --url https://github.com/josecanciani/acp-gateway --quiet",
+    "demo:ui": "docker run --rm -p 3000:8080 -e OPENAI_API_BASE_URLS=http://host.docker.internal:4001/v1 -e OPENAI_API_KEYS=unused -e WEBUI_AUTH=false -e RAG_EMBEDDING_MODEL= -e AUDIO_STT_ENGINE= ghcr.io/open-webui/open-webui:main"
   },
   "keywords": [
     "acp",
