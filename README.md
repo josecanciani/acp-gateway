@@ -10,6 +10,12 @@ A lightweight TypeScript gateway that exposes OpenAI-compatible `/v1/chat/comple
 - **Automatic permissions** — auto-approves agent permission requests (allow-always / allow-once)
 - **Built-in agents** — ships with Devin and Kimi adapters out of the box
 
+## Prerequisites
+
+- **Node.js** >= 22
+- **npm** >= 10
+- An ACP-compatible agent CLI installed and available on `PATH` (e.g. `devin`, `kimi`)
+
 ## Quick Start
 
 ```bash
@@ -18,7 +24,7 @@ npm run build
 npm start
 ```
 
-The server starts on port `4000` by default (set `PORT` to override).
+The server starts on `http://0.0.0.0:4001` by default. Set `PORT` and `HOST` to override.
 
 ## Usage
 
@@ -26,7 +32,7 @@ Send requests just like you would to the OpenAI API:
 
 ```bash
 # Non-streaming
-curl http://localhost:4000/v1/chat/completions \
+curl http://localhost:4001/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "acp/devin",
@@ -34,13 +40,26 @@ curl http://localhost:4000/v1/chat/completions \
   }'
 
 # Streaming
-curl http://localhost:4000/v1/chat/completions \
+curl http://localhost:4001/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "acp/kimi",
     "stream": true,
     "messages": [{"role": "user", "content": "Hello!"}]
   }'
+```
+
+Works with any OpenAI-compatible client library:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:4001/v1", api_key="unused")
+response = client.chat.completions.create(
+    model="acp/devin",
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+print(response.choices[0].message.content)
 ```
 
 ## Endpoints
@@ -51,16 +70,47 @@ curl http://localhost:4000/v1/chat/completions \
 | `GET` | `/v1/models` | List available models |
 | `POST` | `/v1/chat/completions` | Chat completion (streaming and non-streaming) |
 
+See [docs/api.md](docs/api.md) for full request/response schemas.
+
 ## Model Routing
 
 The gateway resolves which ACP agent to use based on the `model` field:
 
 | Model name | Agent |
 |------------|-------|
-| `acp/devin`, `acp-devin`, `cognition` | Devin |
-| `acp/kimi`, `acp-kimi`, `moonshot` | Kimi |
+| `acp/devin`, `acp-devin`, `cognition`, `devin-cli` | Devin |
+| `acp/kimi`, `acp-kimi`, `moonshot`, `kimi-code` | Kimi |
+
+You can also pass `"agent": "devin"` in the request body to explicitly select an adapter regardless of the model name.
 
 Set `ROUTER_DEFAULT_AGENT` to choose the fallback agent for unrecognized model names (default: `kimi`).
+
+## Configuration
+
+### Server
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PORT` | HTTP server port | `4001` |
+| `HOST` | HTTP server bind address | `0.0.0.0` |
+| `ROUTER_DEFAULT_AGENT` | Default agent for unknown models | `kimi` |
+
+### Adapter Settings
+
+Each adapter resolves its settings from a three-tier hierarchy: **request params** > **env vars** > **defaults**.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DEVIN_BIN` | Path to Devin CLI binary | `devin` |
+| `DEVIN_ARGS` | CLI arguments (space-separated) | `acp` |
+| `DEVIN_MODE_ID` | ACP session mode | *(none)* |
+| `DEVIN_BOOTSTRAP_COMMANDS` | Startup commands (space-separated) | *(none)* |
+| `KIMI_BIN` | Path to Kimi CLI binary | `kimi` |
+| `KIMI_ARGS` | CLI arguments (space-separated) | `acp` |
+| `KIMI_MODE_ID` | ACP session mode | `code` |
+| `KIMI_BOOTSTRAP_COMMANDS` | Startup commands (space-separated) | `/plan off /yolo` |
+
+See [docs/configuration.md](docs/configuration.md) for the full reference including per-request overrides.
 
 ## Adding a Custom Adapter
 
@@ -88,49 +138,50 @@ Then register it in `serve.ts`:
 registry.register(new MyAgentAdapter());
 ```
 
-## Configuration
-
-Adapters can be configured via environment variables:
-
-| Variable | Description |
-|----------|-------------|
-| `PORT` | Server port (default: `4000`) |
-| `ROUTER_DEFAULT_AGENT` | Default agent for unknown models (default: `kimi`) |
-| `DEVIN_BIN` | Path to Devin CLI binary |
-| `DEVIN_ARGS` | Custom arguments (JSON array) |
-| `KIMI_BIN` | Path to Kimi CLI binary |
-| `KIMI_ARGS` | Custom arguments (JSON array) |
+See [docs/adapters.md](docs/adapters.md) for more details.
 
 ## Project Structure
 
 ```
 src/
-  adapters/       Pluggable agent adapters (base, static, devin, kimi)
-  client.ts       ACP client — spawns agent subprocess, manages connection
-  registry.ts     Model-to-adapter resolution
-  router_handler.ts  Express handler — completion & streaming logic
-  runtime.ts      ACP session lifecycle (init, prompt, collect results)
-  schemas.ts      Zod schemas for request validation
-  serve.ts        Express app entry point
-  utils.ts        Message formatting, permission handling
+  serve.ts          Express app entry point (HTTP server, routes)
+  router_handler.ts Core handler — converts OpenAI requests to ACP calls
+  runtime.ts        Spawns ACP agent subprocess, manages protocol lifecycle
+  client.ts         ACP Client — permission handling, event queue
+  registry.ts       Model-to-adapter resolution
+  schemas.ts        AgentSpec interface
+  utils.ts          Message formatting, content extraction, path helpers
+  adapters/
+    base.ts         Adapter interface and baseMatches() helper
+    static.ts       StaticAdapter base class (env var + optional_params config)
+    devin.ts        DevinAdapter
+    kimi.ts         KimiAdapter
+    index.ts        Barrel export
+docs/
+  architecture.md   Internal architecture overview
+  api.md            API endpoint reference
+  configuration.md  Full configuration reference
+  adapters.md       Adapter system documentation
 test/
-  *.test.ts       Unit tests (node:test)
-  mock-agent.ts   Mock ACP agent for testing
-  integration/    HTTP endpoint integration tests
+  *.test.ts         Unit tests (node:test)
+  mock-agent.ts     Mock ACP agent for testing
+  integration/      HTTP endpoint integration tests
 ```
 
 ## Development
 
 ```bash
-npm run dev          # Build and start
-npm run lint         # Lint with oxlint
-npm run format       # Format with oxfmt
-npm run typecheck    # Type-check with tsc
-npm run test:node    # Unit tests
-npm run test:integration  # Integration tests
-npm run test:all     # Lint + unit + integration
+npm run dev              # Build and start
+npm run lint             # Lint with oxlint
+npm run format           # Format with oxfmt
+npm run format:check     # Check formatting without writing
+npm run typecheck        # Type-check with tsc
+npm run test:node        # Unit tests only
+npm run test:integration # Integration tests only
+npm run test             # Lint + format check + unit tests
+npm run test:all         # All of the above + integration tests
 ```
 
 ## Credits
 
-Node.js/TypeScript port of [nulrouter/acp-router](https://github.com/nulrouter/acp-router) (Python).
+Inspired by the ideas of [nulrouter/acp-router](https://github.com/nulrouter/acp-router).

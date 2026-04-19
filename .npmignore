@@ -1,3 +1,11 @@
+# Source (compiled output is in dist/)
+src/
+
+# Tests
+test/
+dist-test/
+tsconfig.test.json
+
 # Development and CI
 .devin/
 .git/
@@ -7,8 +15,6 @@
 .oxlintrc.json
 tsconfig.json
 
-# Tests
-test/
-
-# Documentation
+# Documentation (internal)
 AGENTS.md
+docs/
