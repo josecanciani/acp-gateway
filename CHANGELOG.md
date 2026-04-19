@@ -5,11 +5,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `keep-a-changelog` dev dependency for changelog validation and formatting.
+- `npm run changelog` and `npm run changelog:check` scripts.
 
 ## [1.0.1] - 2026-04-19
-
 ### Added
-
 - Documentation site under `docs/` with architecture, API reference, configuration, and adapter guides.
 - Prerequisites section in README (Node.js >= 22, npm >= 10).
 - Python client usage example in README.
@@ -17,12 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Missing model aliases (`devin-cli`, `kimi-code`) to README routing table.
 
 ### Fixed
-
 - `test:node` script was silently running 0 unit tests (used wrong tsconfig and glob path).
 - README default port corrected from `4000` to `4001`.
 - README described `*_ARGS` env vars as "JSON array" — they are space-separated strings.
 - README module descriptions corrected (`schemas.ts` is a TypeScript interface, not Zod; `client.ts` handles permissions/events, not subprocess spawning).
 - `.npmignore` now excludes `src/`, `dist-test/`, `tsconfig.test.json`, and `docs/` from published package.
 
-[Unreleased]: https://github.com/josecanciani/acp-gateway/compare/1.0.1...main
-[1.0.1]: https://github.com/josecanciani/acp-gateway/compare/1.0.0...1.0.1
+[Unreleased]: https://github.com/josecanciani/acp-gateway/compare/1.0.1...HEAD
+[1.0.1]: https://github.com/josecanciani/acp-gateway/releases/tag/1.0.1

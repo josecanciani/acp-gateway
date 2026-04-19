@@ -9,9 +9,40 @@ description: Workflow for recording changelog entries and cutting releases in ac
 
 This project uses **semantic versioning** (`MAJOR.MINOR.PATCH`) and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format. The changelog lives at `CHANGELOG.md` in the project root.
 
+The [`keep-a-changelog`](https://www.npmjs.com/package/keep-a-changelog) npm package is installed as a dev dependency for parsing, validating, and formatting the changelog. It is an industry-standard tool for working with Keep a Changelog files.
+
 Each release is tracked with a git tag (e.g. `1.0.0` — no `v` prefix), a version bump in `package.json`, and a changelog entry.
 
 **Key rule: `package.json` version always reflects the last released (tagged) version.** It is only bumped when cutting a release, never when recording changes.
+
+## CLI Tool: keep-a-changelog
+
+The `keep-a-changelog` CLI is available via npm scripts:
+
+| Command | Description |
+|---------|-------------|
+| `npm run changelog` | Parse and reformat `CHANGELOG.md` (fixes formatting, updates links) |
+| `npm run changelog:check` | Validate `CHANGELOG.md` silently (for CI) |
+
+### Creating a release with the CLI
+
+Instead of manually editing the changelog when cutting a release, you can use:
+
+```bash
+npx keep-a-changelog --no-v-prefix --url https://github.com/josecanciani/acp-gateway --release <version>
+```
+
+This moves `[Unreleased]` entries into a new version heading with today's date and updates comparison links.
+
+### Other useful commands
+
+```bash
+# Print the latest release version
+npx keep-a-changelog --latest-release
+
+# Initialize a new changelog (not needed — already exists)
+npx keep-a-changelog --init
+```
 
 ## Versioning Rules
 
@@ -58,7 +89,13 @@ When the user decides to release:
    npm version <major|minor|patch> --no-git-tag-version
    ```
 
-3. **Update `CHANGELOG.md`**:
+3. **Update `CHANGELOG.md`** using the CLI tool:
+   ```bash
+   npx keep-a-changelog --no-v-prefix --url https://github.com/josecanciani/acp-gateway --release <version>
+   ```
+   This moves all `[Unreleased]` entries into a new version heading with today's date and updates comparison links.
+
+   Alternatively, update manually:
    - Move all entries from `## [Unreleased]` into a new version heading.
    - Insert the new version block between `## [Unreleased]` (now empty) and the previous release.
    - Format: `## [X.Y.Z] - YYYY-MM-DD`

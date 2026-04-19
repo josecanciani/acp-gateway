@@ -18,7 +18,9 @@
     "lint": "oxlint src/ test/",
     "format": "oxfmt --write 'src/**/*.ts' 'test/**/*.ts'",
     "format:check": "oxfmt --check 'src/**/*.ts' 'test/**/*.ts'",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "changelog": "npx keep-a-changelog --no-v-prefix --url https://github.com/josecanciani/acp-gateway",
+    "changelog:check": "npx keep-a-changelog --no-v-prefix --url https://github.com/josecanciani/acp-gateway --quiet"
   },
   "keywords": [
     "acp",
@@ -39,6 +41,7 @@
     "@types/express": "^5.0.6",
     "@types/node": "^25.6.0",
     "@types/uuid": "^10.0.0",
+    "keep-a-changelog": "^3.0.2",
     "oxfmt": "^0.41.0",
     "oxlint": "^1.56.0",
     "typescript": "^6.0.3"

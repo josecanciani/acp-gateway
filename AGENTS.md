@@ -91,6 +91,8 @@ The runtime resolves the agent's CWD from (in priority order):
 | `npm run format`         | Format with oxfmt                        |
 | `npm run format:check`   | Check formatting without writing         |
 | `npm run typecheck`      | Type-check with tsc                      |
+| `npm run changelog`      | Parse and reformat CHANGELOG.md          |
+| `npm run changelog:check`| Validate CHANGELOG.md silently           |
 
 ## Verification
 
