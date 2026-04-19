@@ -1,0 +1,39 @@
+{
+  "name": "acp-gateway",
+  "version": "1.0.0",
+  "description": "An OpenAI-compatible API gateway that routes chat completion requests to ACP agents.",
+  "type": "module",
+  "main": "dist/serve.js",
+  "bin": {
+    "acp-router": "dist/serve.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/serve.js",
+    "dev": "tsc && node dist/serve.js",
+    "test": "npm run lint && npm run format:check && npm run test:node",
+    "test:node": "tsc && node --test dist-test/**/*.test.js",
+    "test:integration": "tsc -p tsconfig.test.json && node --test --test-timeout=30000 dist-test/test/integration/**/*.integration-test.js",
+    "test:all": "npm test && npm run test:integration",
+    "lint": "oxlint src/ test/",
+    "format": "oxfmt --write 'src/**/*.ts' 'test/**/*.ts'",
+    "format:check": "oxfmt --check 'src/**/*.ts' 'test/**/*.ts'",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": ["acp", "agent-client-protocol", "openai", "gateway", "proxy", "llm"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^0.19.0",
+    "express": "^5.2.1",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.6.0",
+    "@types/uuid": "^10.0.0",
+    "oxfmt": "^0.41.0",
+    "oxlint": "^1.56.0",
+    "typescript": "^6.0.3"
+  }
+}

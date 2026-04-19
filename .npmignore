@@ -1,0 +1,14 @@
+# Development and CI
+.devin/
+.git/
+.gitignore
+.gitlab-ci.yml
+.oxfmtrc.json
+.oxlintrc.json
+tsconfig.json
+
+# Tests
+test/
+
+# Documentation
+AGENTS.md

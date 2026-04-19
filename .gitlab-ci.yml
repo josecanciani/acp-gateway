@@ -1,0 +1,56 @@
+stages:
+    - check
+    - test
+
+default:
+    image: node:22-slim
+
+.node-cache: &node-cache
+    cache:
+        key:
+            files:
+                - package.json
+        paths:
+            - node_modules/
+
+install:
+    stage: .pre
+    <<: *node-cache
+    script:
+        - npm install --ignore-scripts
+    artifacts:
+        paths:
+            - node_modules/
+        expire_in: 1 hour
+
+lint:
+    stage: check
+    needs: [install]
+    script:
+        - npx oxlint src/ test/
+
+format:
+    stage: check
+    needs: [install]
+    script:
+        - npx oxfmt --check 'src/**/*.ts' 'test/**/*.ts'
+
+typecheck:
+    stage: check
+    needs: [install]
+    script:
+        - npx tsc --noEmit
+
+test:
+    stage: test
+    needs: [install]
+    script:
+        - npx tsc -p tsconfig.test.json
+        - node --test dist-test/test/**/*.test.js
+
+test:integration:
+    stage: test
+    needs: [install]
+    script:
+        - npx tsc -p tsconfig.test.json
+        - node --test --test-timeout=30000 dist-test/test/integration/**/*.integration-test.js
