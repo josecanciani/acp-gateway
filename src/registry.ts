@@ -1,7 +1,14 @@
 import type { Adapter } from "./adapters/base.js";
+import type { DiscoveredModel } from "./schemas.js";
+
+export interface ResolvedRoute {
+  adapter: Adapter;
+  modelId?: string;
+}
 
 export class Registry {
   private adapters = new Map<string, Adapter>();
+  private modelCache = new Map<string, DiscoveredModel[]>();
   defaultAgent: string;
 
   constructor(defaultAgent = "kimi") {
@@ -16,13 +23,57 @@ export class Registry {
     return this.adapters.get(agentId.trim().toLowerCase());
   }
 
-  resolve(model: string, optionalParams: Record<string, unknown>): Adapter {
+  /** Store discovered models for an adapter (call after model discovery). */
+  setModels(agentId: string, models: DiscoveredModel[]): void {
+    this.modelCache.set(agentId.trim().toLowerCase(), models);
+  }
+
+  /** Get cached models for an adapter. */
+  getModels(agentId: string): DiscoveredModel[] {
+    return this.modelCache.get(agentId.trim().toLowerCase()) ?? [];
+  }
+
+  /** Get all models from all adapters, prefixed with the agent id. */
+  listAllModels(): Array<{
+    id: string;
+    agentId: string;
+    modelId: string;
+    name: string;
+    description?: string;
+  }> {
+    const result: Array<{
+      id: string;
+      agentId: string;
+      modelId: string;
+      name: string;
+      description?: string;
+    }> = [];
+    for (const [agentId, models] of this.modelCache) {
+      for (const m of models) {
+        result.push({
+          id: `${agentId}/${m.modelId}`,
+          agentId,
+          modelId: m.modelId,
+          name: m.name,
+          description: m.description,
+        });
+      }
+    }
+    return result;
+  }
+
+  /** List all registered adapters. */
+  listAdapters(): Adapter[] {
+    return [...this.adapters.values()];
+  }
+
+  resolve(model: string, optionalParams: Record<string, unknown>): ResolvedRoute {
     const explicitAgent = String(optionalParams["agent"] ?? "")
       .trim()
       .toLowerCase();
     if (explicitAgent) {
       const adapter = this.get(explicitAgent);
-      if (adapter) return adapter;
+      if (adapter) return { adapter };
     }
 
     const normalized = String(model ?? "")
@@ -33,30 +84,44 @@ export class Registry {
       .map((p) => p.trim())
       .filter(Boolean);
 
-    if (parts.length >= 2 && parts[0] === "acp") {
-      const adapter = this.get(parts[1]);
-      if (adapter) return adapter;
+    // Handle "{agentId}/{modelId}" — e.g. "devin/claude-opus-4"
+    if (parts.length >= 2) {
+      const adapter = this.get(parts[0]);
+      if (adapter) {
+        const modelId = parts.slice(1).join("/");
+        const knownModels = this.getModels(adapter.agentId);
+        if (knownModels.some((m) => m.modelId.toLowerCase() === modelId.toLowerCase())) {
+          return { adapter, modelId };
+        }
+        // Agent matched but model unknown — route to adapter without model selection
+        return { adapter };
+      }
+      // Legacy "acp/{agentId}" pattern
+      if (parts[0] === "acp") {
+        const adapter = this.get(parts[1]);
+        if (adapter) return { adapter };
+      }
     }
 
     // Handle "acp-{agent}" pattern (e.g. "acp-devin")
     if (normalized.startsWith("acp-")) {
       const agentName = normalized.slice(4);
       const adapter = this.get(agentName);
-      if (adapter) return adapter;
+      if (adapter) return { adapter };
     }
 
     for (const adapter of this.adapters.values()) {
-      if (adapter.matches(normalized)) return adapter;
+      if (adapter.matches(normalized)) return { adapter };
       for (const alias of adapter.aliases) {
-        if (alias && normalized.includes(alias)) return adapter;
+        if (alias && normalized.includes(alias)) return { adapter };
       }
     }
 
     const defaultAdapter = this.get(this.defaultAgent);
-    if (defaultAdapter) return defaultAdapter;
+    if (defaultAdapter) return { adapter: defaultAdapter };
 
     if (this.adapters.size > 0) {
-      return this.adapters.values().next().value!;
+      return { adapter: this.adapters.values().next().value! };
     }
 
     throw new Error("No adapters registered.");

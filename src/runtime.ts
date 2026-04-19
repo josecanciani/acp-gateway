@@ -7,7 +7,7 @@ import {
   type Client,
   type Agent,
 } from "@agentclientprotocol/sdk";
-import type { AgentSpec } from "./schemas.js";
+import type { AgentSpec, DiscoveredModel } from "./schemas.js";
 import { AgentClient } from "./client.js";
 import {
   contentBlocksToText,
@@ -26,6 +26,51 @@ export interface StreamChunk {
 }
 
 export class Runtime {
+  /** Discover available models by spawning an agent, doing the ACP handshake, and reading the session response. */
+  async discoverModels(spec: AgentSpec): Promise<DiscoveredModel[]> {
+    const agentProcess = spawn(spec.bin, spec.args, {
+      stdio: ["pipe", "pipe", "inherit"],
+    });
+
+    const spawnError = await new Promise<Error | null>((resolve) => {
+      agentProcess.on("error", (err) => resolve(err));
+      agentProcess.stdin!.on("ready", () => resolve(null));
+      setTimeout(() => resolve(null), 200);
+    });
+
+    if (spawnError) return [];
+
+    try {
+      const input = Writable.toWeb(agentProcess.stdin!) as WritableStream<Uint8Array>;
+      const output = Readable.toWeb(agentProcess.stdout!) as ReadableStream<Uint8Array>;
+      const stream = ndJsonStream(input, output);
+      const client = new AgentClient();
+      const conn = new ClientSideConnection((_agent: Agent) => client as Client, stream);
+
+      await conn.initialize({
+        protocolVersion: PROTOCOL_VERSION,
+        clientCapabilities: {},
+      });
+
+      const session = await conn.newSession({ cwd: process.cwd(), mcpServers: [] });
+      const models = (session as Record<string, unknown>).models as
+        | { availableModels?: Array<{ modelId: string; name: string; description?: string }> }
+        | undefined;
+
+      if (!models?.availableModels?.length) return [];
+
+      return models.availableModels.map((m) => ({
+        modelId: m.modelId,
+        name: m.name,
+        description: m.description,
+      }));
+    } catch {
+      return [];
+    } finally {
+      agentProcess.kill();
+    }
+  }
+
   resolveCwd(optionalParams: Record<string, unknown>, messages: Message[]): string {
     const metadata = (optionalParams.metadata ?? {}) as Record<string, unknown>;
 
@@ -143,6 +188,22 @@ export class Runtime {
           await conn.setSessionMode({
             sessionId,
             modeId: spec.modeId,
+          });
+        } catch {
+          // ignore if not supported
+        }
+      }
+
+      // Set model if specified
+      if (spec.modelId) {
+        try {
+          await (
+            conn as unknown as {
+              unstable_setSessionModel(p: { sessionId: string; modelId: string }): Promise<unknown>;
+            }
+          ).unstable_setSessionModel({
+            sessionId,
+            modelId: spec.modelId,
           });
         } catch {
           // ignore if not supported

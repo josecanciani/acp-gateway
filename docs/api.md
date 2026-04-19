@@ -18,7 +18,7 @@ Health check.
 
 ### GET /v1/models
 
-List available models.
+List available models. Returns both base adapter models and dynamically discovered per-agent models.
 
 **Response:**
 
@@ -26,11 +26,15 @@ List available models.
 {
   "data": [
     { "id": "acp-kimi", "object": "model", "created": 1677610602, "owned_by": "acp-router" },
-    { "id": "acp-devin", "object": "model", "created": 1677610602, "owned_by": "acp-router" }
+    { "id": "acp-devin", "object": "model", "created": 1677610602, "owned_by": "acp-router" },
+    { "id": "devin/claude-opus-4", "object": "model", "created": 1677610602, "owned_by": "devin" },
+    { "id": "devin/gpt-4o", "object": "model", "created": 1677610602, "owned_by": "devin" }
   ],
   "object": "list"
 }
 ```
+
+Base adapter models use `"owned_by": "acp-router"`. Discovered per-agent models use the agent ID as the owner (e.g. `"owned_by": "devin"`).
 
 ---
 
@@ -42,7 +46,7 @@ Send a chat completion request. Supports both streaming (SSE) and non-streaming 
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `model` | string | No | Model/agent to use (default: `acp/kimi`). See [configuration.md](configuration.md) for routing rules. |
+| `model` | string | No | Model/agent to use (default: `acp/kimi`). Supports `{agentId}/{modelId}` format (e.g. `devin/claude-opus-4`) to select a specific underlying model. See [configuration.md](configuration.md) for routing rules. |
 | `messages` | array | Yes | Array of message objects (`{ role, content }`). |
 | `stream` | boolean | No | Enable SSE streaming (default: `false`). |
 | `tools` | array | No | Tool definitions (passed as hints to the agent). |

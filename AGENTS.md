@@ -47,9 +47,10 @@ acp-gateway/
 
 - **`src/serve.ts`** is the entry point; creates the Express server, registers routes, and starts listening. Not imported by tests.
 - **`src/router_handler.ts`** converts OpenAI-compatible chat completion requests into ACP agent calls. Exposes `streaming()` (async generator) and `completion()` (returns full response). Tests import this.
-- **`src/runtime.ts`** spawns an ACP agent subprocess via `child_process.spawn`, establishes the ACP connection over stdio using the SDK's `ndJsonStream` and `ClientSideConnection`, manages the protocol lifecycle (initialize → newSession → setSessionMode → prompt), and yields streaming chunks.
+- **`src/runtime.ts`** spawns an ACP agent subprocess via `child_process.spawn`, establishes the ACP connection over stdio using the SDK's `ndJsonStream` and `ClientSideConnection`, manages the protocol lifecycle (initialize → newSession → unstable_setSessionModel → setSessionMode → prompt), and yields streaming chunks. Also exposes `discoverModels()` for querying an agent's available models.
 - **`src/client.ts`** implements the ACP `Client` interface. Handles `sessionUpdate` events (text chunks, finished signals), `requestPermission` (auto-allows by default), and provides an async event queue for consumers.
-- **`src/registry.ts`** resolves model names to adapters using multiple strategies: explicit `agent` param → model name pattern (`acp/devin`, `acp-devin`) → aliases (`cognition`, `moonshot`) → default agent → first registered.
+- **`src/registry.ts`** resolves model names to adapters using multiple strategies: explicit `agent` param → `{agentId}/{modelId}` pattern → model name pattern (`acp/devin`, `acp-devin`) → aliases (`cognition`, `moonshot`) → default agent → first registered. Returns a `ResolvedRoute { adapter, modelId? }`. Also manages discovered models.
+- **`src/schemas.ts`** defines `AgentSpec` (with optional `modelId`) and `DiscoveredModel` interfaces.
 - **`src/adapters/static.ts`** is the base class for all concrete adapters. Builds an `AgentSpec` from a three-tier config: request optional_params → env vars → adapter defaults.
 
 ### Request Flow
@@ -58,11 +59,11 @@ acp-gateway/
 HTTP POST /v1/chat/completions
   → Express handler (serve.ts)
   → RouterHandler.streaming() or .completion() (router_handler.ts)
-  → Registry.resolve(model, optionalParams) → Adapter (registry.ts)
+  → Registry.resolve(model, optionalParams) → { adapter, modelId? } (registry.ts)
   → Adapter.buildSpec(optionalParams) → AgentSpec (adapters/static.ts)
   → Runtime.runStream(spec, prompt, optionalParams, messages) (runtime.ts)
     → spawn(bin, args) → ACP connection over stdio
-    → initialize → newSession → setSessionMode → prompt
+    → initialize → newSession → [unstable_setSessionModel] → setSessionMode → prompt
     → yield StreamChunk events from AgentClient queue
   → Express formats as SSE (streaming) or JSON (non-streaming)
 ```
@@ -147,6 +148,9 @@ npm run test:integration
 |-------------------------------------|-------|
 | `acp/devin`, `acp-devin`, `cognition`, `devin-cli` | Devin |
 | `acp/kimi`, `acp-kimi`, `moonshot`, `kimi-code`    | Kimi  |
+| `{agentId}/{modelId}` (e.g. `devin/claude-opus-4`) | Routes to the agent and selects the underlying model |
+
+On startup, the gateway discovers each agent's available models via the ACP `newSession` response and exposes them via `/v1/models`.
 
 ### Adapter Config Hierarchy
 

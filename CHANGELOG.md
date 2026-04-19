@@ -5,9 +5,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [1.1.0] - 2026-04-19
 ### Added
 - `keep-a-changelog` dev dependency for changelog validation and formatting.
 - `npm run changelog` and `npm run changelog:check` scripts.
+- Dynamic model discovery: on startup, the gateway spawns each agent, queries available models via the ACP `newSession` response, and caches them.
+- `/v1/models` now returns both base adapter models (e.g. `acp/devin`) and discovered per-agent models (e.g. `devin/claude-opus-4`).
+- `{agentId}/{modelId}` routing: requesting a model like `devin/claude-opus-4` resolves to the Devin adapter and calls `unstable_setSessionModel` to select that model.
+- `modelId` field on `AgentSpec` for passing model selection through the runtime.
+- `DiscoveredModel` interface in `schemas.ts`.
+- `Registry.setModels()`, `Registry.getModels()`, `Registry.listAllModels()`, `Registry.listAdapters()` methods.
+- `Runtime.discoverModels()` method for querying agent models via ACP.
+- Unit tests for model routing and `listAllModels`.
+- Integration test for model discovery and `{agentId}/{modelId}` request routing.
 
 ## [1.0.1] - 2026-04-19
 ### Added
@@ -24,5 +35,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README module descriptions corrected (`schemas.ts` is a TypeScript interface, not Zod; `client.ts` handles permissions/events, not subprocess spawning).
 - `.npmignore` now excludes `src/`, `dist-test/`, `tsconfig.test.json`, and `docs/` from published package.
 
-[Unreleased]: https://github.com/josecanciani/acp-gateway/compare/1.0.1...HEAD
+[Unreleased]: https://github.com/josecanciani/acp-gateway/compare/1.1.0...HEAD
+[1.1.0]: https://github.com/josecanciani/acp-gateway/compare/1.0.1...1.1.0
 [1.0.1]: https://github.com/josecanciani/acp-gateway/releases/tag/1.0.1

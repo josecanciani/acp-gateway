@@ -14,6 +14,7 @@ import { v4 as uuidv4 } from "uuid";
 import { Registry } from "../../src/registry.js";
 import { StaticAdapter } from "../../src/adapters/static.js";
 import { RouterHandler, type ChatCompletionRequest } from "../../src/router_handler.js";
+import { Runtime } from "../../src/runtime.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MOCK_AGENT_PATH = join(__dirname, "..", "mock-agent.js");
@@ -36,20 +37,41 @@ class MockAdapter extends StaticAdapter {
 let server: Server;
 let baseUrl: string;
 let handler: RouterHandler;
+let registry: Registry;
 
 async function startServer(): Promise<void> {
   const app = express();
   app.use(express.json());
 
-  const registry = new Registry("mock");
-  registry.register(new MockAdapter());
+  registry = new Registry("mock");
+  const mockAdapter = new MockAdapter();
+  registry.register(mockAdapter);
   handler = new RouterHandler(registry);
 
+  // Discover models from mock agent (like serve.ts does)
+  const runtime = new Runtime();
+  const spec = mockAdapter.buildSpec({});
+  const models = await runtime.discoverModels(spec);
+  if (models.length > 0) {
+    registry.setModels(mockAdapter.agentId, models);
+  }
+
   app.get("/v1/models", (_req, res) => {
-    res.json({
-      data: [{ id: "acp-mock", object: "model", created: 1677610602, owned_by: "test" }],
-      object: "list",
-    });
+    const discoveredModels = registry.listAllModels();
+    const adapterModels = registry.listAdapters().map((a) => ({
+      id: `acp/${a.agentId}`,
+      object: "model" as const,
+      created: 1677610602,
+      owned_by: "acp-gateway",
+    }));
+    const agentModels = discoveredModels.map((m) => ({
+      id: m.id,
+      object: "model" as const,
+      created: 1677610602,
+      owned_by: `acp-gateway:${m.agentId}`,
+    }));
+
+    res.json({ data: [...adapterModels, ...agentModels], object: "list" });
   });
 
   app.post("/v1/chat/completions", async (req, res) => {
@@ -123,12 +145,22 @@ describe("ACP Router HTTP endpoints", () => {
     assert.equal(body.status, "ok");
   });
 
-  it("GET /v1/models lists available models", async () => {
+  it("GET /v1/models lists adapter and discovered models", async () => {
     const res = await fetch(`${baseUrl}/v1/models`);
-    const body = (await res.json()) as { data: Array<{ id: string }> };
+    const body = (await res.json()) as { data: Array<{ id: string; owned_by: string }> };
     assert.equal(res.status, 200);
-    assert.equal(body.data.length, 1);
-    assert.equal(body.data[0].id, "acp-mock");
+
+    // Should have the base adapter model plus discovered models
+    const ids = body.data.map((m) => m.id);
+    assert.ok(ids.includes("acp/mock"), `expected acp/mock in ${JSON.stringify(ids)}`);
+    assert.ok(
+      ids.includes("mock/mock-model-a"),
+      `expected mock/mock-model-a in ${JSON.stringify(ids)}`,
+    );
+    assert.ok(
+      ids.includes("mock/mock-model-b"),
+      `expected mock/mock-model-b in ${JSON.stringify(ids)}`,
+    );
   });
 
   it("POST /v1/chat/completions returns mock-response", async () => {
@@ -145,6 +177,25 @@ describe("ACP Router HTTP endpoints", () => {
     };
     assert.equal(res.status, 200);
     assert.equal(body.choices[0].message.content, "mock-response");
+  });
+
+  it("routes mock/{modelId} to mock adapter with model selection", async () => {
+    const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "mock/mock-model-b",
+        messages: [{ role: "user", content: "echo: model-test" }],
+      }),
+    });
+    const body = (await res.json()) as {
+      choices: Array<{ message: { content: string } }>;
+    };
+    assert.equal(res.status, 200);
+    assert.ok(
+      body.choices[0].message.content.startsWith("model-test"),
+      `expected content to start with "model-test", got: ${body.choices[0].message.content.slice(0, 60)}`,
+    );
   });
 
   it("echoes back text after echo: prefix", async () => {

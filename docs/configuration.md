@@ -54,10 +54,22 @@ The `model` field in the request determines which agent handles it:
 Resolution order:
 
 1. Explicit `agent` key in `optional_params` (e.g. `{ "agent": "devin" }`)
-2. Pattern match on model name (`acp/{agentId}` or `acp-{agentId}`)
-3. Alias match (e.g. `cognition` -> Devin)
-4. `ROUTER_DEFAULT_AGENT` environment variable
-5. First registered adapter
+2. `{agentId}/{modelId}` pattern (e.g. `devin/claude-opus-4`) — routes to the agent and selects the underlying model
+3. Pattern match on model name (`acp/{agentId}` or `acp-{agentId}`)
+4. Alias match (e.g. `cognition` -> Devin)
+5. `ROUTER_DEFAULT_AGENT` environment variable
+6. First registered adapter
+
+### Dynamic Model Discovery
+
+On startup, the gateway spawns each registered agent, performs the ACP handshake, and reads the `models` field from the `newSession` response. Discovered models are cached and exposed via `/v1/models` with an `{agentId}/{modelId}` prefix (e.g. `devin/claude-opus-4`).
+
+When a request uses an `{agentId}/{modelId}` model name, the gateway:
+1. Resolves the adapter from the agent ID
+2. After creating the ACP session, calls `unstable_setSessionModel` to switch to the requested model
+3. Proceeds with the prompt as usual
+
+If the model ID is not recognized (not in the cached list), the request still routes to the adapter but without model selection.
 
 ## Per-Request Overrides
 

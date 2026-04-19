@@ -49,8 +49,9 @@ export class RouterHandler {
     const messages = body.messages ?? normalizeIncomingMessages(body as Record<string, unknown>);
     const tools = body.tools;
 
-    const adapter = this.registry.resolve(model, optionalParams);
+    const { adapter, modelId } = this.registry.resolve(model, optionalParams);
     const spec = adapter.buildSpec(optionalParams);
+    if (modelId) spec.modelId = modelId;
     const promptText = messagesToPrompt(messages, tools) || "User: Hello";
 
     yield* this.runtime.runStream({

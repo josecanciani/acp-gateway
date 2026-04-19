@@ -68,7 +68,16 @@ class MockAgent implements Agent {
   async newSession(_params: NewSessionRequest): Promise<NewSessionResponse> {
     const sessionId = randomId();
     this.sessions.set(sessionId, { pendingPrompt: null });
-    return { sessionId };
+    return {
+      sessionId,
+      models: {
+        currentModelId: "mock-model-a",
+        availableModels: [
+          { modelId: "mock-model-a", name: "Mock Model A" },
+          { modelId: "mock-model-b", name: "Mock Model B", description: "A test model" },
+        ],
+      },
+    } as NewSessionResponse;
   }
 
   async authenticate(_params: AuthenticateRequest): Promise<Record<string, unknown>> {

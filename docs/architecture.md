@@ -12,11 +12,11 @@ acp-gateway is a TypeScript HTTP server that translates [OpenAI-compatible](http
 HTTP POST /v1/chat/completions
   -> Express handler (serve.ts)
   -> RouterHandler.streaming() or .completion() (router_handler.ts)
-  -> Registry.resolve(model, optionalParams) -> Adapter (registry.ts)
+  -> Registry.resolve(model, optionalParams) -> { adapter, modelId? } (registry.ts)
   -> Adapter.buildSpec(optionalParams) -> AgentSpec (adapters/static.ts)
   -> Runtime.runStream(spec, prompt, optionalParams, messages) (runtime.ts)
      -> spawn(bin, args) -> ACP connection over stdio
-     -> initialize -> newSession -> setSessionMode -> prompt
+     -> initialize -> newSession -> [unstable_setSessionModel] -> setSessionMode -> prompt
      -> yield StreamChunk events from AgentClient queue
   -> Express formats as SSE (streaming) or JSON (non-streaming)
 ```
@@ -28,7 +28,9 @@ HTTP POST /v1/chat/completions
 Creates the Express application, registers adapters, and starts the HTTP server. This is the only module with side effects; all other modules are pure and testable.
 
 - Registers `KimiAdapter` and `DevinAdapter` into a `Registry`
+- Triggers background model discovery for all adapters on startup
 - Exposes three endpoints: `GET /v1/models`, `POST /v1/chat/completions`, `GET /health`
+- `/v1/models` returns both base adapter models and dynamically discovered per-agent models
 - Formats streaming responses as SSE with OpenAI-compatible JSON payloads
 - Formats non-streaming responses as a single `ChatCompletionResponse`
 
@@ -38,7 +40,7 @@ Converts incoming HTTP request bodies into ACP agent invocations.
 
 - `streaming(body)` -- async generator that yields `StreamChunk` objects
 - `completion(body)` -- collects all chunks and returns a `ChatCompletionResponse`
-- Resolves the adapter via `Registry`, builds an `AgentSpec`, converts messages to a prompt string, and delegates to `Runtime`
+- Resolves the adapter and optional model ID via `Registry`, builds an `AgentSpec` (with `modelId` if specified), converts messages to a prompt string, and delegates to `Runtime`
 
 ### runtime.ts (agent lifecycle)
 
@@ -46,10 +48,12 @@ Spawns the agent subprocess, establishes the ACP connection, runs the protocol h
 
 1. **Spawn** -- `child_process.spawn(bin, args)` with stdio pipes
 2. **Connect** -- converts Node streams to Web streams, creates `ndJsonStream` and `ClientSideConnection`
-3. **Handshake** -- `initialize()` -> `newSession(cwd, mcpServers)` -> `setSessionMode()` (optional)
+3. **Handshake** -- `initialize()` -> `newSession(cwd, mcpServers)` -> `unstable_setSessionModel()` (if `modelId` set) -> `setSessionMode()` (optional)
 4. **Bootstrap** -- runs bootstrap commands (e.g. `/plan off`) with stream suppression
 5. **Prompt** -- sends the user prompt and polls the client event queue for text chunks
 6. **Cleanup** -- kills the agent process in a `finally` block
+
+The runtime also exposes `discoverModels(spec)` which spawns an agent, performs the ACP handshake, reads the `models.availableModels` field from the `newSession` response, and returns a list of `DiscoveredModel` objects.
 
 ### client.ts (ACP client)
 
@@ -60,13 +64,16 @@ Implements the ACP SDK `Client` interface. Handles two responsibilities:
 
 ### registry.ts (model routing)
 
-Maps the `model` field from the request to an adapter instance using a multi-strategy lookup:
+Maps the `model` field from the request to an adapter instance (and optional model ID) using a multi-strategy lookup. Returns a `ResolvedRoute { adapter, modelId? }`.
 
 1. Explicit `agent` param in `optional_params`
-2. Pattern match: `acp/{agentId}` or `acp-{agentId}`
-3. Adapter aliases (e.g. `cognition` -> Devin, `moonshot` -> Kimi)
-4. Default agent (configurable via `ROUTER_DEFAULT_AGENT`)
-5. First registered adapter (last resort)
+2. `{agentId}/{modelId}` pattern (e.g. `devin/claude-opus-4`)
+3. Pattern match: `acp/{agentId}` or `acp-{agentId}`
+4. Adapter aliases (e.g. `cognition` -> Devin, `moonshot` -> Kimi)
+5. Default agent (configurable via `ROUTER_DEFAULT_AGENT`)
+6. First registered adapter (last resort)
+
+Also manages discovered models via `setModels()`, `getModels()`, `listAllModels()`, and `listAdapters()`.
 
 ### adapters/ (pluggable agents)
 
@@ -95,7 +102,7 @@ Shared helpers for message formatting, content extraction, path resolution, and 
 
 ### schemas.ts (types)
 
-Defines the `AgentSpec` interface used to pass agent configuration from adapters to the runtime:
+Defines the `AgentSpec` and `DiscoveredModel` interfaces:
 
 ```typescript
 interface AgentSpec {
@@ -103,7 +110,13 @@ interface AgentSpec {
   bin: string;
   args: string[];
   modeId?: string;
+  modelId?: string;
   bootstrapCommands: string[];
+}
+
+interface DiscoveredModel {
+  agentId: string;
+  modelId: string;
 }
 ```
 

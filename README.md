@@ -81,6 +81,22 @@ The gateway resolves which ACP agent to use based on the `model` field:
 | `acp/devin`, `acp-devin`, `cognition`, `devin-cli` | Devin |
 | `acp/kimi`, `acp-kimi`, `moonshot`, `kimi-code` | Kimi |
 
+### Dynamic Model Discovery
+
+On startup, the gateway spawns each registered agent and queries its available models via the ACP protocol. Discovered models are exposed with an `{agentId}/{modelId}` prefix:
+
+```bash
+# Use a specific underlying model through Devin
+curl http://localhost:4001/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "devin/claude-opus-4",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
+
+The `/v1/models` endpoint returns both base adapter models (e.g. `acp/devin`) and any discovered per-agent models (e.g. `devin/claude-opus-4`, `devin/gpt-4o`).
+
 You can also pass `"agent": "devin"` in the request body to explicitly select an adapter regardless of the model name.
 
 Set `ROUTER_DEFAULT_AGENT` to choose the fallback agent for unrecognized model names (default: `kimi`).
