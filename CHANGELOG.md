@@ -5,18 +5,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [1.3.1] - 2026-04-19
 ### Added
 - Docker agent image version tracking via `AGENT_IMAGE_VERSION` constant and `acp-gateway.version` Docker label. The image is automatically rebuilt at startup when the version changes.
 - Model discovery now logs per-adapter progress at startup (probing, model count, or failure reason).
-
-### Fixed
-- Model discovery no longer marks agents as available when their binary is missing (e.g. kimi in Docker mode). Only agents that report models are shown.
-- Docker containers now set `--hostname acp-agent-container` so agents can detect they're running in a container instead of reporting the host machine name.
+- Startup banner now shows the OpenAI-compatible API base URL (`http://localhost:4001/v1`) for easy copy-paste into clients like Jan.
 
 ### Changed
 - Docker credential mounts simplified to only mount `credentials.toml` (authentication token). The host `config.json` and `mcp/` directory are no longer mounted — they contain macOS-specific paths that don't apply inside containers.
 - Docker naming convention: `demo:ui` container now uses `--name acp-gateway-webui` and volume `acp-gateway-webui-data` (was anonymous container with `open-webui-demo` volume).
 - `demo:ui` container output is now redirected to a log file (`$XDG_DATA_HOME/acp-gateway/webui.log`) instead of flooding the terminal. On failure, the last 20 lines are shown automatically.
+- Agent Docker containers renamed from `acp-<hex>` to `acp-gateway-<hex>` for consistency with project naming convention.
+
+### Fixed
+- Model discovery no longer marks agents as available when their binary is missing (e.g. kimi in Docker mode). Only agents that report models are shown.
+- Docker containers now set `--hostname acp-agent-container` so agents can detect they're running in a container instead of reporting the host machine name.
+- Docker build output is now shown (last 30 lines) when image build fails, instead of a silent failure.
+- Docker image build failures on Ubuntu 24.04 fixed: UID/GID 1000 conflict resolved by renaming the default `ubuntu` user, installer piped to `bash` instead of `sh`, and interactive `devin setup` stripped from install script.
+- Docker container user permissions fixed: removed `--user` override that caused permission denied errors on macOS (host UID 501 vs container UID 1000).
+- Docker image version mismatch rebuilds now use `--no-cache` to prevent Docker from reusing stale cached layers.
+- Orphaned Docker containers are now cleaned up on gateway exit (SIGINT, SIGTERM, process exit) via `docker kill`.
+- Startup URL now shows `localhost` instead of `0.0.0.0`.
 
 ## [1.3.0] - 2026-04-20
 ### Added
@@ -95,7 +105,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README module descriptions corrected (`schemas.ts` is a TypeScript interface, not Zod; `client.ts` handles permissions/events, not subprocess spawning).
 - `.npmignore` now excludes `src/`, `dist-test/`, `tsconfig.test.json`, and `docs/` from published package.
 
-[Unreleased]: https://github.com/josecanciani/acp-gateway/compare/1.3.0...HEAD
+[Unreleased]: https://github.com/josecanciani/acp-gateway/compare/1.3.1...HEAD
+[1.3.1]: https://github.com/josecanciani/acp-gateway/compare/1.3.0...1.3.1
 [1.3.0]: https://github.com/josecanciani/acp-gateway/compare/1.2.0...1.3.0
 [1.2.0]: https://github.com/josecanciani/acp-gateway/compare/1.1.0...1.2.0
 [1.1.0]: https://github.com/josecanciani/acp-gateway/compare/1.0.1...1.1.0
