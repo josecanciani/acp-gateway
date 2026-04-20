@@ -5,8 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- Model discovery no longer marks agents as available when their binary is missing (e.g. kimi in Docker mode). Only agents that report models are shown.
+- Docker containers now set `--hostname acp-agent-container` so agents can detect they're running in a container instead of reporting the host machine name.
+
 ### Changed
+- Docker credential mounts simplified to only mount `credentials.toml` (authentication token). The host `config.json` and `mcp/` directory are no longer mounted — they contain macOS-specific paths that don't apply inside containers.
 - Docker naming convention: `demo:ui` container now uses `--name acp-gateway-webui` and volume `acp-gateway-webui-data` (was anonymous container with `open-webui-demo` volume).
+- `demo:ui` container output is now redirected to a log file (`$XDG_DATA_HOME/acp-gateway/webui.log`) instead of flooding the terminal. On failure, the last 20 lines are shown automatically.
 
 ## [1.3.0] - 2026-04-20
 ### Added

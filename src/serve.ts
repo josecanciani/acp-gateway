@@ -37,8 +37,8 @@ async function discoverAllModels(): Promise<void> {
     try {
       const spec = adapter.buildSpec({});
       const models = await runtime.discoverModels(spec);
-      registry.markAvailable(adapter.agentId);
       if (models.length > 0) {
+        registry.markAvailable(adapter.agentId);
         registry.setModels(adapter.agentId, models);
         log.debug(`  Discovered ${models.length} model(s) for ${adapter.agentId}`);
       }

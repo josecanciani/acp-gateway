@@ -21,7 +21,7 @@
         "typecheck": "tsc --noEmit",
         "changelog": "npx keep-a-changelog --no-v-prefix --url https://github.com/josecanciani/acp-gateway",
         "changelog:check": "npx keep-a-changelog --no-v-prefix --url https://github.com/josecanciani/acp-gateway --quiet",
-        "demo:ui": "docker run --rm --name acp-gateway-webui -p 3000:8080 -v acp-gateway-webui-data:/app/backend/data --add-host=host.docker.internal:host-gateway -e OPENAI_API_BASE_URLS=http://host.docker.internal:4001/v1 -e OPENAI_API_KEYS=unused -e WEBUI_AUTH=false -e WEBUI_ADMIN_EMAIL=admin@localhost -e WEBUI_ADMIN_PASSWORD=admin -e WEBUI_ADMIN_NAME=Admin -e RAG_EMBEDDING_MODEL= -e AUDIO_STT_ENGINE= ghcr.io/open-webui/open-webui:main",
+        "demo:ui": "bash scripts/demo-ui.sh",
         "docker:build": "docker build -t acp-gateway-agent docker/agent"
     },
     "keywords": [

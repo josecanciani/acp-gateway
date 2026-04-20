@@ -40,6 +40,8 @@ acp-gateway/
     configuration.md      # Full configuration reference
     adapters.md           # Adapter system documentation
     sandboxing.md         # Agent isolation reference
+  scripts/
+    demo-ui.sh            # Open WebUI launcher (log file, clean output)
   test/
     registry.test.ts      # Unit tests for adapter resolution
     utils.test.ts         # Unit tests for message formatting and utilities

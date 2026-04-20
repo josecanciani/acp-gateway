@@ -183,8 +183,6 @@ export class Runtime {
         name: m.name,
         description: m.description,
       }));
-    } catch {
-      return [];
     } finally {
       agentProcess.kill();
     }
@@ -316,6 +314,8 @@ export class Runtime {
         "-i",
         "--name",
         containerName,
+        "--hostname",
+        "acp-agent-container",
         "--user",
         `${uid}:${gid}`,
         "-v",
@@ -340,29 +340,25 @@ export class Runtime {
     return spawn(spec.bin, spec.args, { stdio: ["pipe", "pipe", stderr] });
   }
 
-  /** Build Docker volume mount flags for Devin credentials. */
+  /**
+   * Build Docker volume mount flags for the Devin credentials file.
+   *
+   * Only the authentication token is mounted — the host config.json contains
+   * macOS-specific paths (MCP servers, permissions) that don't apply inside
+   * the container, and mounting the whole ~/.local/share/devin/ directory
+   * would expose host-native (Mach-O) binaries that cause "Exec format error".
+   */
   private dockerCredentialMounts(): string[] {
     const home = process.env.HOME ?? "/tmp";
-    const mounts: string[] = [];
-
-    const configDir = process.env.DEVIN_CONFIG_DIR ?? path.join(home, ".config", "devin");
-    if (existsSync(configDir)) {
-      mounts.push("-v", `${configDir}:/home/agent/.config/devin:ro`);
-    }
 
     const credsFile =
       process.env.DEVIN_CREDENTIALS_FILE ??
       path.join(home, ".local", "share", "devin", "credentials.toml");
     if (existsSync(credsFile)) {
-      mounts.push("-v", `${credsFile}:/home/agent/.local/share/devin/credentials.toml:ro`);
+      return ["-v", `${credsFile}:/home/agent/.local/share/devin/credentials.toml:ro`];
     }
 
-    const mcpDir = process.env.DEVIN_MCP_DIR ?? path.join(home, ".local", "share", "devin", "mcp");
-    if (existsSync(mcpDir)) {
-      mounts.push("-v", `${mcpDir}:/home/agent/.local/share/devin/mcp:ro`);
-    }
-
-    return mounts;
+    return [];
   }
 
   private async *runStreamInternal(opts: {

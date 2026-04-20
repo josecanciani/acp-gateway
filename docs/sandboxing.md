@@ -66,16 +66,17 @@ The strongest isolation tier. The agent process runs inside a disposable contain
 ### Container Configuration
 
 - **Workspace mount:** The conversation workspace directory is mounted at `/workspace` inside the container.
-- **Credential mounts** (read-only):
+- **Credential mount** (read-only):
 
 | Host path | Container path |
 |-----------|---------------|
-| `~/.config/devin` | `/home/agent/.config/devin` |
 | `~/.local/share/devin/credentials.toml` | `/home/agent/.local/share/devin/credentials.toml` |
-| `~/.local/share/devin/mcp` | `/home/agent/.local/share/devin/mcp` |
+
+Only the authentication token file is mounted. The host `config.json` is **not** mounted because it contains macOS-specific paths (MCP server commands, permission rules) that don't apply inside the container. Mounting the full `~/.local/share/devin/` directory is also avoided because it contains host-native (Mach-O) binaries that cause "Exec format error" on Linux containers.
 
 - **Container flags:**
   - `--rm` — auto-removed on exit
+  - `--hostname acp-agent-container` — explicit hostname so agents can detect containerized execution
   - Named `acp-<random>` to avoid collisions
   - Runs with host UID:GID so files written to `/workspace` have correct ownership
   - The agent binary receives `--sandbox` inside the container (defense in depth)
@@ -84,10 +85,9 @@ The strongest isolation tier. The agent process runs inside a disposable contain
 
 ```
 Runtime.spawnAgent(spec, isolationMode)
-  → docker run --rm --name acp-<id> \
+  → docker run --rm --hostname acp-agent-container --name acp-<id> \
       -v <workspace>:/workspace \
-      -v ~/.config/devin:/home/agent/.config/devin:ro \
-      ... \
+      -v ~/.local/share/devin/credentials.toml:...credentials.toml:ro \
       acp-gateway-agent <bin> <args> --sandbox
   → ACP connection over stdio (same as Direct mode)
 ```
