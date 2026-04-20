@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 import { Registry } from "./registry.js";
 import { Runtime, type StreamChunk, type IsolationMode } from "./runtime.js";
+import { log } from "./logger.js";
 import {
   normalizeIncomingMessages,
   messagesToPrompt,
@@ -83,6 +84,9 @@ export class RouterHandler {
     const { adapter, modelId } = this.registry.resolve(model, optionalParams);
     const spec = adapter.buildSpec(optionalParams);
     if (modelId) spec.modelId = modelId;
+    log.debug(
+      `  request: model=${model} → adapter=${adapter.agentId}, modelId=${spec.modelId ?? "(none)"}`,
+    );
 
     // Get or create workspace
     const ws = this.workspaces.getOrCreate(conversationId);

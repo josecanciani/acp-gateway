@@ -518,19 +518,39 @@ export class Runtime {
         }
       }
 
-      // Set model if specified
+      // Set model if specified — try setSessionConfigOption first (stable API),
+      // fall back to unstable_setSessionModel for older agents.
       if (spec.modelId) {
+        let modelSet = false;
         try {
-          await (
-            conn as unknown as {
-              unstable_setSessionModel(p: { sessionId: string; modelId: string }): Promise<unknown>;
-            }
-          ).unstable_setSessionModel({
+          await conn.setSessionConfigOption({
             sessionId,
-            modelId: spec.modelId,
-          });
+            configId: "model",
+            type: "boolean",
+            value: spec.modelId,
+          } as unknown as Parameters<typeof conn.setSessionConfigOption>[0]);
+          log.debug(`  model set to ${spec.modelId} (via configOption)`);
+          modelSet = true;
         } catch {
-          // ignore if not supported
+          // configOption not supported — try unstable_setSessionModel
+        }
+        if (!modelSet) {
+          try {
+            await (
+              conn as unknown as {
+                unstable_setSessionModel(p: {
+                  sessionId: string;
+                  modelId: string;
+                }): Promise<unknown>;
+              }
+            ).unstable_setSessionModel({
+              sessionId,
+              modelId: spec.modelId,
+            });
+            log.debug(`  model set to ${spec.modelId} (via setSessionModel)`);
+          } catch (err) {
+            log.warn(`  failed to set model ${spec.modelId}: ${err}`);
+          }
         }
       }
 

@@ -94,7 +94,8 @@ describe("Registry model routing", () => {
 
     const { adapter, modelId } = registry.resolve("devin/claude-opus-4", {});
     assert.equal(adapter.agentId, "devin");
-    assert.equal(modelId, "claude-opus-4");
+    // Preserves original casing from discovery, not the request
+    assert.equal(modelId, "Claude-Opus-4");
   });
 
   it("falls back to adapter when model is unknown", () => {

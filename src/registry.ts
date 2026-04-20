@@ -103,8 +103,10 @@ export class Registry {
       if (adapter) {
         const modelId = parts.slice(1).join("/");
         const knownModels = this.getModels(adapter.agentId);
-        if (knownModels.some((m) => m.modelId.toLowerCase() === modelId.toLowerCase())) {
-          return { adapter, modelId };
+        const match = knownModels.find((m) => m.modelId.toLowerCase() === modelId.toLowerCase());
+        if (match) {
+          // Return the original modelId from discovery (preserves casing)
+          return { adapter, modelId: match.modelId };
         }
         // Agent matched but model unknown — route to adapter without model selection
         return { adapter };
