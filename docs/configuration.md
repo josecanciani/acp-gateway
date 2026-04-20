@@ -18,6 +18,21 @@ By default the gateway prepends a system message that instructs the agent to beh
 
 Set `GATEWAY_SYSTEM_PROMPT` to override the text, or set it to an empty string (`""`) to disable injection entirely — useful when callers already supply their own system prompt.
 
+## Tool Bridge
+
+The gateway can transparently bridge OpenAI-style `tools` in a request to MCP tools that ACP agents can use. When a request includes a `tools` array, the gateway spawns a temporary MCP server exposing those tools, passes it to the agent, and converts agent tool calls back to OpenAI `tool_calls` in the response. See [tool-bridge.md](tool-bridge.md) for the full architecture.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `TOOL_BRIDGE_ENABLED` | Enable/disable the tool bridge (`true`/`false`) | `true` |
+| `TOOL_BRIDGE_COLLECTION_WINDOW_MS` | Time (ms) to wait for additional tool calls after the first one | `500` |
+| `TOOL_BRIDGE_SYSTEM_PROMPT` | System prompt used when tools are present (replaces the default gateway prompt) | *(built-in MCP-focused prompt)* |
+
+When tools are present in a request and the bridge is enabled:
+- The default `GATEWAY_SYSTEM_PROMPT` is replaced by `TOOL_BRIDGE_SYSTEM_PROMPT`
+- Tool definitions are stripped from the prompt text (they become MCP tools instead)
+- The response may contain `tool_calls` with `finish_reason: "tool_calls"` instead of `stop`
+
 ## Agent Isolation
 
 | Variable | Description | Default |

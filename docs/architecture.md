@@ -109,6 +109,29 @@ Request optional_params  ->  Environment variables  ->  Adapter defaults
 
 See [configuration.md](configuration.md) for the full list of settings.
 
+### tool_bridge.ts (OpenAI → MCP tool bridge)
+
+Translates OpenAI-style `tools` arrays into a temporary MCP server that ACP agents can connect to, and collects tool call signals back. This enables OpenAI-compatible clients (like VS Code Copilot) to use tool-calling with ACP agents that only understand MCP.
+
+- `prepareBridge(tools, workspaceDir)` -- creates a `.acp-tool-bridge/` directory in the workspace, converts OpenAI tool definitions to MCP format, and returns an `McpServerStdio` config for the agent
+- `collectToolCalls(signalDir, windowMs)` -- polls the signal directory for JSON files written by the bridge server; batches calls within a configurable collection window
+- `cleanupBridge(bridgeDir)` -- removes bridge files from the workspace
+- `toOpenAIToolCalls(calls)` -- converts collected tool calls to OpenAI `tool_calls` format
+- `TOOL_BRIDGE_SYSTEM_PROMPT` -- system prompt used when tools are present (configurable via env var)
+
+### mcp_bridge_server.ts (standalone MCP server)
+
+A standalone Node.js script spawned as a child process by the agent (via the MCP server config). It:
+
+1. Reads tool definitions from `BRIDGE_TOOLS_JSON` env var
+2. Exposes them as MCP tools via stdio (using `@modelcontextprotocol/sdk`)
+3. When the agent calls a tool, writes a JSON signal file to `BRIDGE_SIGNAL_DIR` and blocks forever
+4. The gateway detects the signal, collects the tool call, and kills the agent process
+
+This "write-and-block" pattern avoids returning a fake tool result — the gateway intercepts the call before the agent ever sees a response.
+
+See [tool-bridge.md](tool-bridge.md) for the full architecture and design rationale.
+
 ### utils.ts (utilities)
 
 Shared helpers for message formatting, content extraction, path resolution, and permission selection. Key functions:
@@ -202,6 +225,35 @@ await conn.prompt({
   prompt: [{ type: "text", text: promptText }],
 });
 ```
+
+## Tool Bridge (OpenAI tools → MCP)
+
+When a client sends OpenAI-style `tools` in the request body, the gateway activates the tool bridge to translate between the two protocols. This enables clients like VS Code Copilot to use tool-calling with ACP agents.
+
+### Bridge Flow
+
+```
+Client sends POST /v1/chat/completions with tools: [...]
+  → router_handler detects tools array, activates bridge
+  → prepareBridge() creates temp MCP server config
+  → tools stripped from prompt, bridge system prompt injected
+  → Runtime spawns agent with bridge MCP server in newSession(mcpServers)
+  → Agent connects to bridge MCP server via stdio
+  → Agent sees tools via MCP tools/list, calls one
+  → Bridge server writes signal file + blocks forever
+  → collectToolCalls() detects signal file(s)
+  → Gateway kills agent, returns tool_calls to client
+  → Client executes tools locally, sends results in next request
+```
+
+### Key Design Decisions
+
+- **Filesystem signaling** -- the bridge server writes JSON signal files instead of using network IPC, keeping the design simple and portable
+- **Write-and-block** -- the bridge server never responds to tool calls; it blocks forever after writing the signal, and the gateway kills the agent process
+- **Collection window** -- after the first tool call signal, the gateway waits a configurable window (`TOOL_BRIDGE_COLLECTION_WINDOW_MS`, default 500ms) for additional tool calls, enabling batch tool calling
+- **System prompt swap** -- when tools are present, `GATEWAY_SYSTEM_PROMPT` is replaced by `TOOL_BRIDGE_SYSTEM_PROMPT` which instructs the agent to use only MCP tools
+
+See [tool-bridge.md](tool-bridge.md) for the complete design document.
 
 ## Workspace & File Lifecycle
 

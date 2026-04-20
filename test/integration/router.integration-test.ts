@@ -466,4 +466,111 @@ describe("ACP Router HTTP endpoints", () => {
       `expected user message in prompt text, got: ${content.slice(0, 200)}`,
     );
   });
+
+  it("returns tool_calls when request includes tools and agent calls MCP tool", async () => {
+    const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "acp-mock",
+        messages: [{ role: "user", content: 'mcp-tool: read_file {"path": "src/app.ts"}' }],
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "read_file",
+              description: "Read a file",
+              parameters: {
+                type: "object",
+                properties: { path: { type: "string" } },
+                required: ["path"],
+              },
+            },
+          },
+        ],
+      }),
+    });
+    const body = (await res.json()) as Record<string, unknown>;
+    assert.equal(res.status, 200);
+
+    const choices = body.choices as Array<{
+      finish_reason: string;
+      message: { tool_calls?: Array<{ function: { name: string; arguments: string } }> };
+    }>;
+    assert.equal(choices[0].finish_reason, "tool_calls");
+    assert.ok(choices[0].message.tool_calls, "expected tool_calls in response");
+    assert.equal(choices[0].message.tool_calls!.length, 1);
+    assert.equal(choices[0].message.tool_calls![0].function.name, "read_file");
+
+    const args = JSON.parse(choices[0].message.tool_calls![0].function.arguments);
+    assert.equal(args.path, "src/app.ts");
+  });
+
+  it("uses tool bridge system prompt when tools are present", async () => {
+    const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "acp-mock",
+        messages: [{ role: "user", content: "prompt: dump-with-tools" }],
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "search",
+              description: "Search codebase",
+              parameters: { type: "object", properties: {} },
+            },
+          },
+        ],
+      }),
+    });
+    const body = (await res.json()) as {
+      choices: Array<{ message: { content: string } }>;
+    };
+    assert.equal(res.status, 200);
+    const content = body.choices[0].message.content;
+    // Should have tool bridge prompt, not the default one
+    assert.ok(
+      content.includes("MCP tools") || content.includes("client-tools"),
+      `expected tool bridge system prompt, got: ${content.slice(0, 200)}`,
+    );
+    assert.ok(
+      !content.includes("Do NOT use tools such as shell commands"),
+      "should not have default system prompt when tools are present",
+    );
+  });
+
+  it("returns finish_reason stop when tools present but agent doesn't call them", async () => {
+    const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "acp-mock",
+        messages: [{ role: "user", content: "echo: just-text" }],
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "read_file",
+              description: "Read a file",
+              parameters: { type: "object", properties: {} },
+            },
+          },
+        ],
+      }),
+    });
+    const body = (await res.json()) as Record<string, unknown>;
+    assert.equal(res.status, 200);
+
+    const choices = body.choices as Array<{
+      finish_reason: string;
+      message: { content: string; tool_calls?: unknown[] };
+    }>;
+    assert.equal(choices[0].finish_reason, "stop");
+    assert.ok(
+      !choices[0].message.tool_calls,
+      "should not have tool_calls when agent doesn't call tools",
+    );
+  });
 });

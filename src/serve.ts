@@ -107,7 +107,11 @@ app.post("/v1/chat/completions", async (req, res) => {
           object: "chat.completion.chunk",
           choices: [
             chunk.is_finished
-              ? { finish_reason: "stop", index: 0, delta: {} }
+              ? {
+                  finish_reason: chunk.finish_reason ?? "stop",
+                  index: 0,
+                  delta: chunk.tool_calls ? { tool_calls: chunk.tool_calls } : {},
+                }
               : { index: 0, delta: { content: chunk.text, role: "assistant" } },
           ],
         };

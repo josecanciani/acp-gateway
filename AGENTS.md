@@ -21,6 +21,8 @@ acp-gateway/
     client.ts             # ACP Client implementation (permissions, event queue, file tracking)
     registry.ts           # Model-to-adapter resolution
     workspace.ts          # Per-conversation workspace manager (files, GC, artifacts)
+    tool_bridge.ts        # OpenAI tools → MCP bridge orchestration
+    mcp_bridge_server.ts  # Standalone MCP server script (spawned by agent)
     schemas.ts            # AgentSpec interface
     utils.ts              # Message formatting, content extraction, permission helpers
     logger.ts             # Lightweight logger with LOG_LEVEL support
@@ -40,6 +42,7 @@ acp-gateway/
     configuration.md      # Full configuration reference
     adapters.md           # Adapter system documentation
     sandboxing.md         # Agent isolation reference
+    tool-bridge.md        # MCP tool bridge design document
   scripts/
     demo-ui.sh            # Open WebUI launcher (log file, clean output)
   test/
@@ -64,6 +67,8 @@ acp-gateway/
 - **`src/registry.ts`** resolves model names to adapters using multiple strategies: explicit `agent` param → `{agentId}/{modelId}` pattern → model name pattern (`acp/devin`, `acp-devin`) → aliases (`cognition`, `moonshot`) → default agent → first registered. Returns a `ResolvedRoute { adapter, modelId? }`. Also manages discovered models.
 - **`src/schemas.ts`** defines `AgentSpec` (with optional `modelId`) and `DiscoveredModel` interfaces.
 - **`src/adapters/static.ts`** is the base class for all concrete adapters. Builds an `AgentSpec` from a three-tier config: request optional_params → env vars → adapter defaults.
+- **`src/tool_bridge.ts`** translates OpenAI-style `tools` arrays into a temporary MCP server for ACP agents. Manages bridge setup, filesystem signal collection, and cleanup. See `docs/tool-bridge.md`.
+- **`src/mcp_bridge_server.ts`** is a standalone MCP server script spawned by the agent. Exposes client tools, writes signal files on tool calls, and blocks forever (gateway kills the agent).
 
 ### Request Flow
 
@@ -152,7 +157,7 @@ npm run test:integration
 ```
 - Starts the Express server with a mock ACP agent adapter
 - Hits HTTP endpoints with real HTTP requests
-- Mock agent behavior is controlled by prompt text (`echo:`, `error`, `slow`, `multi`, `permission`, `file:`)
+- Mock agent behavior is controlled by prompt text (`echo:`, `error`, `slow`, `multi`, `permission`, `file:`, `mcp-tool:`)
 - Test files use the `*.integration-test.ts` suffix (excluded from fast `test:node`)
 
 ## Configuration
@@ -170,6 +175,9 @@ npm run test:integration
 | `WORKSPACE_TTL_MS`          | Workspace expiry (milliseconds)    | `3600000`   |
 | `AGENT_ISOLATION`           | Isolation mode: `docker`, `sandbox`, `direct`, `auto` | `auto` |
 | `AGENT_DOCKER_IMAGE`        | Docker image for Docker isolation  | `acp-gateway-agent` |
+| `TOOL_BRIDGE_ENABLED`       | Enable/disable tool bridge         | `true`      |
+| `TOOL_BRIDGE_COLLECTION_WINDOW_MS` | Tool call collection window (ms) | `500` |
+| `TOOL_BRIDGE_SYSTEM_PROMPT` | System prompt when tools are present | *(built-in MCP prompt)* |
 | `DEVIN_BIN`                 | Path to Devin CLI binary           | `devin`     |
 | `DEVIN_ARGS`                | Custom arguments (space-separated) | `acp`       |
 | `DEVIN_MODE_ID`             | ACP session mode                   | *(none)*    |

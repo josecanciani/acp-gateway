@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 - Gateway system prompt: a default system message is prepended to every request, instructing the agent to behave as a standard chat LLM (no tool use). Configurable via `GATEWAY_SYSTEM_PROMPT` env var; set to empty string to disable.
+- MCP tool bridge: OpenAI-style `tools` in requests are transparently bridged to MCP tools that ACP agents can use. When an agent calls a tool, the gateway returns `tool_calls` in the OpenAI format so clients (e.g. VS Code Copilot) can execute them locally. Configurable via `TOOL_BRIDGE_ENABLED`, `TOOL_BRIDGE_COLLECTION_WINDOW_MS`, and `TOOL_BRIDGE_SYSTEM_PROMPT` env vars. See `docs/tool-bridge.md` for architecture details.
 
 ### Fixed
 - Internal model IDs (e.g. `MODEL_GPT_5_2_HIGH`) are now filtered out from model discovery results.

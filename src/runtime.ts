@@ -80,6 +80,11 @@ export interface StreamChunk {
   index: number;
   is_finished: boolean;
   text: string;
+  tool_calls?: Array<{
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }>;
   tool_use: null;
   usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null;
 }
@@ -88,6 +93,8 @@ export interface RunStreamResult {
   stream: AsyncGenerator<StreamChunk>;
   /** The AgentClient instance; available for reading trackedFiles after stream completes. */
   client: AgentClient;
+  /** Kill the agent process immediately (e.g. when tool calls are detected). */
+  kill: () => void;
 }
 
 /** Detect the best available isolation mode at startup. */
@@ -116,7 +123,7 @@ const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
  * The value is stored as a Docker label on the built image; at startup the gateway
  * compares the label against this constant and rebuilds when they differ.
  */
-const AGENT_IMAGE_VERSION = "3";
+const AGENT_IMAGE_VERSION = "5";
 
 const IMAGE_LABEL = "acp-gateway.version";
 
@@ -359,8 +366,14 @@ export class Runtime {
         .toLowerCase(),
       cwd,
     );
-    const stream = this.runStreamInternal({ ...opts, cwd, client });
-    return { stream, client };
+    // Shared holder: the generator sets this when the agent is spawned.
+    // The kill() function reads it to kill the agent directly.
+    const agentRef: { current?: SpawnedAgent } = {};
+    const stream = this.runStreamInternal({ ...opts, cwd, client, agentRef });
+    const kill = () => {
+      if (agentRef.current) killAgent(agentRef.current);
+    };
+    return { stream, client, kill };
   }
 
   async *runStream(opts: {
@@ -396,6 +409,7 @@ export class Runtime {
     spec: AgentSpec,
     hostCwd: string,
     stderr: "inherit" | "ignore" = "inherit",
+    bridgeHostConfigPath?: string,
   ): SpawnedAgent {
     if (this.isolationMode === "docker") {
       const imageName = process.env.AGENT_DOCKER_IMAGE ?? "acp-gateway-agent";
@@ -417,6 +431,7 @@ export class Runtime {
         "-v",
         `${hostCwd}:/workspace`,
         ...this.dockerCredentialMounts(),
+        ...this.dockerBridgeConfigMounts(bridgeHostConfigPath),
         imageName,
         spec.bin,
         "--sandbox",
@@ -463,6 +478,19 @@ export class Runtime {
     return [];
   }
 
+  /**
+   * Build Docker volume mount flags for the tool bridge config file.
+   *
+   * Mounts the bridge's agent-config.json at the standard Devin user config
+   * location (~/.config/devin/config.json) inside the container. This lets
+   * the agent discover the bridge MCP server through its native config
+   * loading rather than relying on newSession mcpServers or --config.
+   */
+  private dockerBridgeConfigMounts(hostConfigPath?: string): string[] {
+    if (!hostConfigPath || !existsSync(hostConfigPath)) return [];
+    return ["-v", `${hostConfigPath}:/home/agent/.config/devin/config.json:ro`];
+  }
+
   private async *runStreamInternal(opts: {
     spec: AgentSpec;
     promptText: string;
@@ -470,15 +498,26 @@ export class Runtime {
     messages: Message[];
     cwd?: string;
     client: AgentClient;
+    agentRef?: { current?: SpawnedAgent };
   }): AsyncGenerator<StreamChunk> {
     const { spec, promptText, optionalParams, messages, client } = opts;
 
     const cwd = opts.cwd ?? this.resolveCwd(optionalParams, messages);
     const mcpServers = (optionalParams.mcp_servers as unknown[]) ?? [];
+    const bridgeHostConfigPath = optionalParams._bridge_host_config_path as string | undefined;
 
     // Spawn the agent process (isolation-mode aware)
     // Forward agent stderr only at debug level
-    const agent = this.spawnAgent(spec, cwd, log.level === "debug" ? "inherit" : "ignore");
+    const agent = this.spawnAgent(
+      spec,
+      cwd,
+      log.level === "debug" ? "inherit" : "ignore",
+      bridgeHostConfigPath,
+    );
+
+    // Expose the agent to the caller so it can be killed externally
+    // (e.g. by the tool bridge when tool calls are detected).
+    if (opts.agentRef) opts.agentRef.current = agent;
 
     // Handle spawn errors (e.g. binary not found)
     const spawnError = await new Promise<Error | null>((resolve) => {
@@ -513,7 +552,7 @@ export class Runtime {
       // Create session
       const session = await conn.newSession({
         cwd: sessionCwd,
-        mcpServers: mcpServers as Array<{ name: string; uri: string }>,
+        mcpServers: mcpServers as Array<Record<string, unknown>>,
       });
       const sessionId = session.sessionId;
 

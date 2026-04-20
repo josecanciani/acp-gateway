@@ -16,7 +16,8 @@ RUN --mount=type=cache,target=/var/cache/apt,id=apt-cache-agent,sharing=locked \
        curl \
        git \
        ca-certificates \
-       bubblewrap
+       bubblewrap \
+       nodejs
 
 # Rename the default ubuntu user (UID/GID 1000) to "agent".
 # Ubuntu 24.04 ships with ubuntu:ubuntu at 1000:1000; reuse it instead of
@@ -32,6 +33,10 @@ USER agent
 
 # Install Devin CLI as the agent user
 RUN /tmp/install-devin.sh
+
+# Pre-create the config directory tree so bind-mounting a single file
+# (config.json) does not prevent Devin from creating sibling dirs.
+RUN mkdir -p /home/agent/.config/devin/cli
 
 # Ensure ~/.local/bin is on PATH for all sessions
 ENV PATH="/home/agent/.local/bin:${PATH}"
