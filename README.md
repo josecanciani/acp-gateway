@@ -170,6 +170,7 @@ See [docs/sandboxing.md](docs/sandboxing.md) for the full reference.
 |----------|-------------|---------|
 | `PORT` | HTTP server port | `4001` |
 | `HOST` | HTTP server bind address | `0.0.0.0` |
+| `LOG_LEVEL` | Log verbosity: `error`, `warn`, `info`, `debug` | `info` |
 | `ROUTER_DEFAULT_AGENT` | Default agent for unknown models | `kimi` |
 | `WORKSPACE_BASE_DIR` | Base directory for conversation workspaces | `$XDG_DATA_HOME/acp-gateway/workspaces` |
 | `WORKSPACE_TTL_MS` | Workspace expiry time in milliseconds | `3600000` (1 hour) |
@@ -233,6 +234,7 @@ src/
   workspace.ts      Per-conversation workspace manager (files, GC, artifacts)
   schemas.ts        AgentSpec interface
   utils.ts          Message formatting, content extraction, path helpers
+  logger.ts         Lightweight logger with LOG_LEVEL support
   adapters/
     base.ts         Adapter interface and baseMatches() helper
     static.ts       StaticAdapter base class (env var + optional_params config)

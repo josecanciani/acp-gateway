@@ -12,6 +12,7 @@ import {
 } from "@agentclientprotocol/sdk";
 import type { AgentSpec, DiscoveredModel } from "./schemas.js";
 import { AgentClient } from "./client.js";
+import { log } from "./logger.js";
 import {
   contentBlocksToText,
   extractExistingPathsFromText,
@@ -64,7 +65,8 @@ export class Runtime {
   /** Discover available models by spawning an agent, doing the ACP handshake, and reading the session response. */
   async discoverModels(spec: AgentSpec): Promise<DiscoveredModel[]> {
     const discoverCwd = process.cwd();
-    const agentProcess = this.spawnAgent(spec, discoverCwd);
+    // Suppress agent stderr during discovery — it produces verbose INFO logs
+    const agentProcess = this.spawnAgent(spec, discoverCwd, "ignore");
 
     const spawnError = await new Promise<Error | null>((resolve) => {
       agentProcess.on("error", (err) => resolve(err));
@@ -233,8 +235,16 @@ export class Runtime {
    * - direct:  spawn(bin, args)
    * - sandbox: spawn(bin, ["--sandbox", ...args])
    * - docker:  spawn("docker", ["run", ..., image, bin, ...args])
+   *
+   * @param stderr  Where to send the child's stderr.
+   *   "inherit" forwards to the gateway's stderr (default for prompts),
+   *   "ignore" suppresses it (used during model discovery).
    */
-  private spawnAgent(spec: AgentSpec, hostCwd: string): ChildProcess {
+  private spawnAgent(
+    spec: AgentSpec,
+    hostCwd: string,
+    stderr: "inherit" | "ignore" = "inherit",
+  ): ChildProcess {
     if (this.isolationMode === "docker") {
       const imageName = process.env.AGENT_DOCKER_IMAGE ?? "acp-gateway-agent";
       const uid = process.getuid?.() ?? 1000;
@@ -258,17 +268,17 @@ export class Runtime {
         ...spec.args,
       ];
 
-      return spawn("docker", dockerArgs, { stdio: ["pipe", "pipe", "inherit"] });
+      return spawn("docker", dockerArgs, { stdio: ["pipe", "pipe", stderr] });
     }
 
     if (this.isolationMode === "sandbox") {
       return spawn(spec.bin, ["--sandbox", ...spec.args], {
-        stdio: ["pipe", "pipe", "inherit"],
+        stdio: ["pipe", "pipe", stderr],
       });
     }
 
     // direct mode
-    return spawn(spec.bin, spec.args, { stdio: ["pipe", "pipe", "inherit"] });
+    return spawn(spec.bin, spec.args, { stdio: ["pipe", "pipe", stderr] });
   }
 
   /** Build Docker volume mount flags for Devin credentials. */
@@ -310,7 +320,8 @@ export class Runtime {
     const mcpServers = (optionalParams.mcp_servers as unknown[]) ?? [];
 
     // Spawn the agent process (isolation-mode aware)
-    const agentProcess = this.spawnAgent(spec, cwd);
+    // Forward agent stderr only at debug level
+    const agentProcess = this.spawnAgent(spec, cwd, log.level === "debug" ? "inherit" : "ignore");
 
     // Handle spawn errors (e.g. binary not found)
     const spawnError = await new Promise<Error | null>((resolve) => {

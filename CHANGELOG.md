@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `npm run docker:build` script to build the agent isolation Docker image.
 - Unit tests for permission filtering and event queue (`test/client.test.ts`).
 - `docs/sandboxing.md` — full reference for the agent isolation system.
+- `LOG_LEVEL` environment variable to control log verbosity (`error`, `warn`, `info`, `debug`; default `info`).
+- Lightweight logger module (`src/logger.ts`).
 
 ### Changed
 - Workspace default directory follows the XDG Base Directory Specification (`$XDG_DATA_HOME/acp-gateway/workspaces`, defaults to `~/.local/share/acp-gateway/workspaces`).
@@ -30,7 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Runtime.runStreamWithClient()` exposes both stream and client for post-stream file tracking.
 - `Runtime` now accepts an `isolationMode` parameter and spawns agents accordingly via `spawnAgent()`.
 - `AgentClient` constructor now accepts an optional `workspaceDir` parameter for path-scoped permission filtering.
-- Server startup banner displays the active isolation mode.
+- Server startup output is now compact (URL, isolation mode, agent summary) instead of verbose banner with full model list.
+- Agent subprocess stderr is suppressed during model discovery and prompts (visible at `LOG_LEVEL=debug`).
 
 ## [1.2.0] - 2026-04-19
 ### Added

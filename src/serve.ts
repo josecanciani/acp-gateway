@@ -8,6 +8,7 @@ import { KimiAdapter, DevinAdapter } from "./adapters/index.js";
 import { RouterHandler, type ChatCompletionRequest } from "./router_handler.js";
 import { Runtime, detectIsolationMode } from "./runtime.js";
 import { WorkspaceManager } from "./workspace.js";
+import { log } from "./logger.js";
 
 const app = express();
 app.use(express.json({ limit: "50mb" }));
@@ -35,9 +36,7 @@ async function discoverAllModels(): Promise<void> {
       registry.markAvailable(adapter.agentId);
       if (models.length > 0) {
         registry.setModels(adapter.agentId, models);
-        console.log(
-          `  Discovered ${models.length} model(s) for ${adapter.agentId}: ${models.map((m) => m.modelId).join(", ")}`,
-        );
+        log.debug(`  Discovered ${models.length} model(s) for ${adapter.agentId}`);
       }
     } catch {
       // Agent not available — skip silently
@@ -129,7 +128,7 @@ app.post("/v1/chat/completions", async (req, res) => {
       res.json(response);
     }
   } catch (err) {
-    console.error("[acp-router] Error:", err);
+    console.error("[acp-gateway] Error:", err);
     res.status(500).json({
       error: {
         message: String(err instanceof Error ? err.message : err),
@@ -200,7 +199,7 @@ app.get("/health", (_req, res) => {
 setInterval(() => {
   const removed = workspaces.gc();
   if (removed > 0) {
-    console.log(`[acp-router] GC: removed ${removed} expired workspace(s)`);
+    log.debug(`GC: removed ${removed} expired workspace(s)`);
   }
 }, 600_000);
 
@@ -229,27 +228,23 @@ const port = parseInt(process.env.PORT ?? "4001", 10);
 const host = process.env.HOST ?? "0.0.0.0";
 
 app.listen(port, host, () => {
-  console.log(`
-   ╔══════════════════════════════════════╗
-   ║         ACP Router (Node.js)         ║
-   ║                                      ║
-   ║   OpenAI-compatible → ACP agents     ║
-   ╚══════════════════════════════════════╝
-
-   Listening on http://${host}:${port}
-   Isolation: ${isolationMode}
-  `);
+  log.info(`acp-gateway listening on http://${host}:${port}`);
+  log.info(`  isolation: ${isolationMode}`);
 
   // Discover models in the background after server starts
   discoverAllModels().then(() => {
     const discovered = registry.listAllModels();
     if (discovered.length > 0) {
-      console.log(`   Models: ${discovered.map((m) => m.id).join(", ")}`);
+      // Group by agent for a compact summary
+      const byAgent = new Map<string, number>();
+      for (const m of discovered) {
+        byAgent.set(m.agentId, (byAgent.get(m.agentId) ?? 0) + 1);
+      }
+      const summary = [...byAgent.entries()].map(([id, n]) => `${id} (${n})`).join(", ");
+      log.info(`  agents: ${summary}`);
     } else {
       const adapters = registry.listAdapters();
-      console.log(
-        `   Models: ${adapters.map((a) => `acp/${a.agentId}`).join(", ")} (no agent-specific models discovered)`,
-      );
+      log.info(`  agents: ${adapters.map((a) => a.agentId).join(", ")} (no models discovered)`);
     }
   });
 });

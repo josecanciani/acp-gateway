@@ -8,6 +8,7 @@ All configuration is done through environment variables and/or per-request `opti
 |----------|-------------|---------|
 | `PORT` | HTTP server port | `4001` |
 | `HOST` | HTTP server bind address | `0.0.0.0` |
+| `LOG_LEVEL` | Log verbosity: `error`, `warn`, `info`, `debug` | `info` |
 | `ROUTER_DEFAULT_AGENT` | Default agent for unrecognized model names | `kimi` |
 
 ## Agent Isolation
