@@ -1,4 +1,4 @@
-import { spawn, execSync, type ChildProcess } from "node:child_process";
+import { spawn, execSync, spawnSync, type ChildProcess } from "node:child_process";
 import { Writable, Readable } from "node:stream";
 import { randomBytes } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
@@ -82,16 +82,37 @@ export function ensureDockerImage(): boolean {
   }
 
   log.info(`  building image ${imageName}...`);
-  try {
-    execSync(`docker build -t ${imageName} ${dockerContext}`, {
-      stdio: log.level === "debug" ? "inherit" : "ignore",
-    });
+  if (log.level === "debug") {
+    // Stream build output directly to the terminal
+    try {
+      execSync(`docker build -t ${imageName} ${dockerContext}`, { stdio: "inherit" });
+      log.info(`  image ${imageName} ready`);
+      return true;
+    } catch {
+      log.warn(`  failed to build image ${imageName}`);
+      return false;
+    }
+  }
+
+  // Capture output so we can show it on failure
+  const result = spawnSync("docker", ["build", "-t", imageName, dockerContext], {
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf-8",
+  });
+  if (result.status === 0) {
     log.info(`  image ${imageName} ready`);
     return true;
-  } catch {
-    log.warn(`  failed to build image ${imageName}`);
-    return false;
   }
+
+  const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+  log.warn(`  failed to build image ${imageName}`);
+  if (output) {
+    log.warn("  docker build output:");
+    for (const line of output.split("\n").slice(-30)) {
+      log.warn(`    ${line}`);
+    }
+  }
+  return false;
 }
 
 export class Runtime {
