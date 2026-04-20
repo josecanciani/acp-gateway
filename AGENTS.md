@@ -88,7 +88,7 @@ Three-tier isolation system (auto-detected at startup, override via `AGENT_ISOLA
 
 | Mode | Spawn Strategy | Detection |
 |------|---------------|-----------|
-| Docker | `docker run --rm -i -v cwd:/workspace ... image bin --sandbox args` | `acp-gateway-agent` image exists |
+| Docker | `docker run --rm -i -v cwd:/workspace ... image bin --sandbox args` | Docker daemon reachable (image auto-built if missing) |
 | Sandbox | `bin --sandbox args` | Default fallback |
 | Direct | `bin args` | `AGENT_ISOLATION=direct` |
 

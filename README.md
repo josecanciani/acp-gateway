@@ -145,7 +145,7 @@ The gateway implements a three-tier isolation system to limit what spawned agent
 
 | Mode | Mechanism | When used |
 |------|-----------|-----------|
-| **Docker** | Full container namespace isolation | `acp-gateway-agent` image is available |
+| **Docker** | Full container namespace isolation | Docker daemon is available (image built automatically) |
 | **Sandbox** | OS-level file/network isolation via `--sandbox` | Default when Docker is unavailable |
 | **Direct** | No OS-level isolation | Explicit opt-in via `AGENT_ISOLATION=direct` |
 
@@ -155,8 +155,7 @@ All modes include **workspace-scoped permission filtering** — the gateway auto
 # Override auto-detection
 AGENT_ISOLATION=sandbox npm start
 
-# Build and use the Docker isolation image
-npm run docker:build
+# Force Docker isolation (image is built automatically if missing)
 AGENT_ISOLATION=docker npm start
 ```
 

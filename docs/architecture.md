@@ -299,7 +299,7 @@ The gateway implements a three-tier isolation system to limit what agents can ac
 
 | Mode | Mechanism | Auto-detection |
 |------|-----------|----------------|
-| Docker | Full container namespace isolation | `docker image inspect acp-gateway-agent` succeeds |
+| Docker | Full container namespace isolation | Docker daemon reachable (image built automatically if missing) |
 | Sandbox | OS-level file/network isolation (`--sandbox` flag) | Default when Docker is unavailable |
 | Direct | No OS-level isolation | Explicit opt-in via `AGENT_ISOLATION=direct` |
 

@@ -12,8 +12,8 @@ On top of OS-level isolation, the `AgentClient` enforces **workspace-scoped perm
 
 | Priority | Mode | Detection | Isolation |
 |----------|------|-----------|-----------|
-| 1 | Docker | `docker image inspect acp-gateway-agent` succeeds | Full namespace isolation (pid, net, mount) |
-| 2 | Sandbox | Default when Docker image is absent | OS-level file/network restrictions via macOS seatbelt or Linux bubblewrap+seccomp |
+| 1 | Docker | Docker daemon is reachable (`docker info`) | Full namespace isolation (pid, net, mount) |
+| 2 | Sandbox | Default when Docker is unavailable | OS-level file/network restrictions via macOS seatbelt or Linux bubblewrap+seccomp |
 | 3 | Direct | Explicit opt-in or last-resort fallback | None — agent runs as a regular child process |
 
 All three modes include workspace permission filtering (see [Workspace-Scoped Permission Filtering](#workspace-scoped-permission-filtering)).
@@ -52,8 +52,10 @@ AGENT_ISOLATION=direct npm start
 The `detectIsolationMode()` function runs once at startup and selects a mode for all subsequent requests:
 
 1. If `AGENT_ISOLATION` is set to `docker`, `sandbox`, or `direct`, use that value directly.
-2. Run `docker image inspect <AGENT_DOCKER_IMAGE>` — if the command succeeds, use **Docker** mode.
+2. Run `docker info` — if the Docker daemon is reachable, use **Docker** mode.
 3. Otherwise, fall back to **Sandbox** mode.
+
+When Docker mode is selected, the gateway calls `ensureDockerImage()` which checks whether the agent image exists and builds it automatically from `docker/agent/Dockerfile` if missing. If the build fails, the gateway falls back to Sandbox mode with a warning.
 
 The detected mode is logged at startup and passed to `RouterHandler`, which forwards it to the runtime on every request.
 
@@ -92,7 +94,7 @@ Runtime.spawnAgent(spec, isolationMode)
 
 ## Sandbox Mode
 
-The default mode when the Docker image is not available. Adds the `--sandbox` flag to the agent binary invocation, which activates the agent's built-in OS-level sandbox:
+The default mode when Docker is not available. Adds the `--sandbox` flag to the agent binary invocation, which activates the agent's built-in OS-level sandbox:
 
 - **macOS:** Uses the seatbelt sandbox (`sandbox-exec`) to restrict filesystem and network access.
 - **Linux:** Uses bubblewrap (`bwrap`) with seccomp filters.

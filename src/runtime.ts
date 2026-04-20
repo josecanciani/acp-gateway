@@ -2,6 +2,7 @@ import { spawn, execSync, type ChildProcess } from "node:child_process";
 import { Writable, Readable } from "node:stream";
 import { randomBytes } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import path from "node:path";
 import {
   ClientSideConnection,
@@ -42,18 +43,55 @@ export function detectIsolationMode(): IsolationMode {
   const override = (process.env.AGENT_ISOLATION ?? "auto").trim().toLowerCase();
   if (override === "docker" || override === "sandbox" || override === "direct") return override;
 
-  // Docker: requires daemon and the agent image
+  // Docker: requires the daemon to be reachable
   try {
-    const imageName = process.env.AGENT_DOCKER_IMAGE ?? "acp-gateway-agent";
-    execSync(`docker image inspect ${imageName} --format "{{.Id}}"`, { stdio: "ignore" });
+    execSync("docker info", { stdio: "ignore" });
     return "docker";
   } catch {
-    // Docker not available or image not built
+    // Docker not available
   }
 
   // Sandbox: available on macOS (seatbelt) and Linux (bwrap).
   // We don't probe here — Devin itself fails closed if unavailable.
   return "sandbox";
+}
+
+/** Project root directory (parent of dist/). */
+const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+/**
+ * Ensure the Docker agent image exists, building it if necessary.
+ * Should be called at startup when isolation mode is "docker".
+ * Returns true if the image is ready, false if the build failed.
+ */
+export function ensureDockerImage(): boolean {
+  const imageName = process.env.AGENT_DOCKER_IMAGE ?? "acp-gateway-agent";
+
+  // Check if image already exists
+  try {
+    execSync(`docker image inspect ${imageName} --format "{{.Id}}"`, { stdio: "ignore" });
+    return true;
+  } catch {
+    // Image not found — try to build it
+  }
+
+  const dockerContext = path.join(PROJECT_ROOT, "docker", "agent");
+  if (!existsSync(path.join(dockerContext, "Dockerfile"))) {
+    log.warn(`Docker isolation requested but Dockerfile not found at ${dockerContext}`);
+    return false;
+  }
+
+  log.info(`  building image ${imageName}...`);
+  try {
+    execSync(`docker build -t ${imageName} ${dockerContext}`, {
+      stdio: log.level === "debug" ? "inherit" : "ignore",
+    });
+    log.info(`  image ${imageName} ready`);
+    return true;
+  } catch {
+    log.warn(`  failed to build image ${imageName}`);
+    return false;
+  }
 }
 
 export class Runtime {

@@ -20,7 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `AGENT_ISOLATION` environment variable to override isolation mode auto-detection (`docker`, `sandbox`, `direct`, `auto`).
 - `AGENT_DOCKER_IMAGE` environment variable to configure the Docker isolation image name.
 - `docker/agent/Dockerfile` and `install-devin.sh` for building the agent isolation container image.
-- `npm run docker:build` script to build the agent isolation Docker image.
+- `npm run docker:build` script to build the agent isolation Docker image manually.
+- Docker image is built automatically at startup when Docker mode is selected and the image is missing (falls back to sandbox on failure).
 - Unit tests for permission filtering and event queue (`test/client.test.ts`).
 - `docs/sandboxing.md` — full reference for the agent isolation system.
 - `LOG_LEVEL` environment variable to control log verbosity (`error`, `warn`, `info`, `debug`; default `info`).
@@ -38,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `AgentClient` constructor now accepts an optional `workspaceDir` parameter for path-scoped permission filtering.
 - Server startup output is now compact (URL, isolation mode, agent summary) instead of verbose banner with full model list.
 - Agent subprocess stderr is suppressed during model discovery and prompts (visible at `LOG_LEVEL=debug`).
+- Docker auto-detection probes daemon availability (`docker info`) instead of image existence; image is built on demand.
 
 ## [1.2.0] - 2026-04-19
 ### Added
