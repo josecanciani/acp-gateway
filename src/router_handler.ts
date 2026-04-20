@@ -182,6 +182,7 @@ export class RouterHandler {
       optionalParams,
       messages,
       cwd: ws.dir,
+      homeDir: ws.homeDir,
     });
 
     const context: StreamingContext = {

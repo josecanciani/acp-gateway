@@ -24,6 +24,8 @@ describe("WorkspaceManager", () => {
     assert.ok(ws.token);
     assert.ok(ws.dir.startsWith(TEST_BASE));
     assert.ok(existsSync(ws.dir));
+    assert.ok(ws.homeDir.startsWith(TEST_BASE));
+    assert.equal(ws.dir, path.join(ws.homeDir, "workspace"));
   });
 
   it("creates a workspace with explicit ID", () => {

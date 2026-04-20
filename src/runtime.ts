@@ -1,7 +1,7 @@
 import { spawn, execSync, spawnSync, type ChildProcess } from "node:child_process";
 import { Writable, Readable } from "node:stream";
 import { randomBytes } from "node:crypto";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, copyFileSync, mkdirSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import {
@@ -375,6 +375,7 @@ export class Runtime {
     optionalParams: Record<string, unknown>;
     messages: Message[];
     cwd?: string;
+    homeDir?: string;
   }): RunStreamResult {
     const cwd = opts.cwd ?? this.resolveCwd(opts.optionalParams, opts.messages);
     const client = new AgentClient(
@@ -427,6 +428,7 @@ export class Runtime {
     hostCwd: string,
     stderr: "inherit" | "ignore" = "inherit",
     bridgeHostConfigPath?: string,
+    homeDir?: string,
   ): SpawnedAgent {
     if (this.isolationMode === "docker") {
       const imageName = process.env.AGENT_DOCKER_IMAGE ?? "acp-gateway-agent";
@@ -467,45 +469,50 @@ export class Runtime {
       return agent;
     }
 
-    if (this.isolationMode === "sandbox") {
-      // Pass --config to Devin-like CLIs so the bridge config replaces the
-      // user's personal config (prevents leaking personal MCP servers).
-      // Only known CLIs support this flag; generic binaries (e.g. node for
-      // mock agents) would fail on an unknown flag.
-      const configArgs =
-        this.supportsConfigFlag(spec.bin) && bridgeHostConfigPath
-          ? ["--config", bridgeHostConfigPath]
-          : [];
-      const agent: SpawnedAgent = {
-        process: spawn(spec.bin, ["--sandbox", ...configArgs, ...spec.args], {
-          stdio: ["pipe", "pipe", stderr],
-        }),
-      };
-      activeAgents.add(agent);
-      agent.process.on("exit", () => activeAgents.delete(agent));
-      return agent;
-    }
+    // sandbox and direct modes: use the conversation homeDir as HOME
+    // to isolate the agent from the host's MCP servers, config, and cache.
+    // If no homeDir is provided (e.g. model discovery), fall back to default.
+    const env = homeDir ? { ...process.env, HOME: homeDir } : undefined;
 
-    // direct mode
-    const configArgs =
-      this.supportsConfigFlag(spec.bin) && bridgeHostConfigPath
-        ? ["--config", bridgeHostConfigPath]
-        : [];
+    const args = this.isolationMode === "sandbox" ? ["--sandbox", ...spec.args] : [...spec.args];
+
     const agent: SpawnedAgent = {
-      process: spawn(spec.bin, [...configArgs, ...spec.args], { stdio: ["pipe", "pipe", stderr] }),
+      process: spawn(spec.bin, args, { stdio: ["pipe", "pipe", stderr], ...(env && { env }) }),
     };
     activeAgents.add(agent);
-    agent.process.on("exit", () => activeAgents.delete(agent));
+    agent.process.on("exit", () => {
+      activeAgents.delete(agent);
+    });
     return agent;
   }
 
   /**
-   * Whether the agent binary supports the `--config` CLI flag.
-   * Currently only Devin-like CLIs (devin, kimi) support it.
+   * Prepare a conversation's home directory for use as the agent's HOME.
+   *
+   * The directory itself is created by WorkspaceManager. This method
+   * populates it with:
+   * - Credentials copied from the real HOME so the agent can authenticate
+   * - Bridge config (if provided) so Devin discovers MCP tools natively
    */
-  private supportsConfigFlag(bin: string): boolean {
-    const name = path.basename(bin).toLowerCase();
-    return name === "devin" || name === "kimi";
+  private prepareAgentHome(homeDir: string, bridgeConfigPath?: string): void {
+    const configDir = path.join(homeDir, ".config", "devin");
+    const dataDir = path.join(homeDir, ".local", "share", "devin");
+    mkdirSync(configDir, { recursive: true });
+    mkdirSync(dataDir, { recursive: true });
+
+    // Copy credentials so the agent can authenticate
+    const realHome = process.env.HOME ?? "/tmp";
+    const credsFile =
+      process.env.DEVIN_CREDENTIALS_FILE ??
+      path.join(realHome, ".local", "share", "devin", "credentials.toml");
+    if (existsSync(credsFile)) {
+      copyFileSync(credsFile, path.join(dataDir, "credentials.toml"));
+    }
+
+    // Install bridge config so Devin finds tools
+    if (bridgeConfigPath && existsSync(bridgeConfigPath)) {
+      copyFileSync(bridgeConfigPath, path.join(configDir, "config.json"));
+    }
   }
 
   /**
@@ -548,6 +555,7 @@ export class Runtime {
     optionalParams: Record<string, unknown>;
     messages: Message[];
     cwd?: string;
+    homeDir?: string;
     client: AgentClient;
     agentRef?: { current?: SpawnedAgent };
   }): AsyncGenerator<StreamChunk> {
@@ -557,6 +565,11 @@ export class Runtime {
     const mcpServers = (optionalParams.mcp_servers as unknown[]) ?? [];
     const bridgeHostConfigPath = optionalParams._bridge_host_config_path as string | undefined;
 
+    // Prepare the agent's isolated HOME (sandbox/direct modes only)
+    if (opts.homeDir && this.isolationMode !== "docker") {
+      this.prepareAgentHome(opts.homeDir, bridgeHostConfigPath);
+    }
+
     // Spawn the agent process (isolation-mode aware)
     // Forward agent stderr only at debug level
     const agent = this.spawnAgent(
@@ -564,6 +577,7 @@ export class Runtime {
       cwd,
       log.level === "debug" ? "inherit" : "ignore",
       bridgeHostConfigPath,
+      opts.homeDir,
     );
 
     // Expose the agent to the caller so it can be killed externally

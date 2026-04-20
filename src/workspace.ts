@@ -7,20 +7,24 @@ export interface WorkspaceInfo {
   conversationId: string;
   /** Random token for artifact URLs (not the same as conversationId) */
   token: string;
-  /** Absolute path to the workspace directory */
+  /** Absolute path to the conversation root (used as agent HOME) */
+  homeDir: string;
+  /** Absolute path to the workspace directory (homeDir/workspace, agent CWD) */
   dir: string;
   /** Timestamp of last activity (epoch ms) */
   lastActivity: number;
 }
 
 /**
- * Manages per-conversation workspace directories.
+ * Manages per-conversation directories.
  *
- * Each conversation gets a unique directory where:
- * - Uploaded files are materialized before the agent runs
- * - The agent CWD is set to this directory
- * - Output files (created/modified by the agent) persist between turns
- * - An artifact token secures download URLs
+ * Each conversation gets a unique directory (`homeDir`) that serves as
+ * the agent's isolated HOME. Inside it:
+ * - `workspace/` is the agent's CWD where project files and artifacts live
+ * - `.config/devin/` holds the bridge config (written by the runtime)
+ * - `.local/share/devin/` holds copied credentials (written by the runtime)
+ *
+ * The entire `homeDir` is cleaned up when the conversation expires.
  */
 export class WorkspaceManager {
   private workspaces = new Map<string, WorkspaceInfo>();
@@ -54,12 +58,14 @@ export class WorkspaceManager {
     // Generate new conversation ID if not provided
     const id = conversationId || randomBytes(16).toString("hex");
     const token = randomBytes(16).toString("hex");
-    const dir = path.join(this.baseDir, id);
+    const homeDir = path.join(this.baseDir, id);
+    const dir = path.join(homeDir, "workspace");
     mkdirSync(dir, { recursive: true });
 
     const info: WorkspaceInfo = {
       conversationId: id,
       token,
+      homeDir,
       dir,
       lastActivity: Date.now(),
     };
@@ -164,7 +170,7 @@ export class WorkspaceManager {
     this.tokenIndex.delete(ws.token);
     this.workspaces.delete(conversationId);
     try {
-      rmSync(ws.dir, { recursive: true, force: true });
+      rmSync(ws.homeDir, { recursive: true, force: true });
     } catch {
       // ignore cleanup errors
     }
