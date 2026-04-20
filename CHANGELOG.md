@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-04-19
+### Fixed
+- Model selection now works when choosing specific models (e.g. `devin/gpt-5-4-high`). Uses `setSessionConfigOption` instead of `unstable_setSessionModel` which was not implemented by the Devin CLI.
+- Model ID casing from discovery is now preserved when routing requests (was being lowercased, which could cause mismatches).
+
 ## [1.3.1] - 2026-04-19
 ### Added
 - Docker agent image version tracking via `AGENT_IMAGE_VERSION` constant and `acp-gateway.version` Docker label. The image is automatically rebuilt at startup when the version changes.
@@ -105,7 +110,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README module descriptions corrected (`schemas.ts` is a TypeScript interface, not Zod; `client.ts` handles permissions/events, not subprocess spawning).
 - `.npmignore` now excludes `src/`, `dist-test/`, `tsconfig.test.json`, and `docs/` from published package.
 
-[Unreleased]: https://github.com/josecanciani/acp-gateway/compare/1.3.1...HEAD
+[Unreleased]: https://github.com/josecanciani/acp-gateway/compare/1.3.2...HEAD
+[1.3.2]: https://github.com/josecanciani/acp-gateway/compare/1.3.1...1.3.2
 [1.3.1]: https://github.com/josecanciani/acp-gateway/compare/1.3.0...1.3.1
 [1.3.0]: https://github.com/josecanciani/acp-gateway/compare/1.2.0...1.3.0
 [1.2.0]: https://github.com/josecanciani/acp-gateway/compare/1.1.0...1.2.0
