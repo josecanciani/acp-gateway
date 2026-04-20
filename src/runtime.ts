@@ -468,8 +468,16 @@ export class Runtime {
     }
 
     if (this.isolationMode === "sandbox") {
+      // Pass --config to Devin-like CLIs so the bridge config replaces the
+      // user's personal config (prevents leaking personal MCP servers).
+      // Only known CLIs support this flag; generic binaries (e.g. node for
+      // mock agents) would fail on an unknown flag.
+      const configArgs =
+        this.supportsConfigFlag(spec.bin) && bridgeHostConfigPath
+          ? ["--config", bridgeHostConfigPath]
+          : [];
       const agent: SpawnedAgent = {
-        process: spawn(spec.bin, ["--sandbox", ...spec.args], {
+        process: spawn(spec.bin, ["--sandbox", ...configArgs, ...spec.args], {
           stdio: ["pipe", "pipe", stderr],
         }),
       };
@@ -479,12 +487,25 @@ export class Runtime {
     }
 
     // direct mode
+    const configArgs =
+      this.supportsConfigFlag(spec.bin) && bridgeHostConfigPath
+        ? ["--config", bridgeHostConfigPath]
+        : [];
     const agent: SpawnedAgent = {
-      process: spawn(spec.bin, spec.args, { stdio: ["pipe", "pipe", stderr] }),
+      process: spawn(spec.bin, [...configArgs, ...spec.args], { stdio: ["pipe", "pipe", stderr] }),
     };
     activeAgents.add(agent);
     agent.process.on("exit", () => activeAgents.delete(agent));
     return agent;
+  }
+
+  /**
+   * Whether the agent binary supports the `--config` CLI flag.
+   * Currently only Devin-like CLIs (devin, kimi) support it.
+   */
+  private supportsConfigFlag(bin: string): boolean {
+    const name = path.basename(bin).toLowerCase();
+    return name === "devin" || name === "kimi";
   }
 
   /**
