@@ -33,17 +33,23 @@ const handler = new RouterHandler(registry, workspaces, isolationMode);
 // Discover available models from each agent at startup
 async function discoverAllModels(): Promise<void> {
   const runtime = new Runtime(isolationMode);
-  for (const adapter of registry.listAdapters()) {
+  const allAdapters = registry.listAdapters();
+  log.info(`  discovering models for ${allAdapters.length} adapter(s)...`);
+  for (const adapter of allAdapters) {
     try {
       const spec = adapter.buildSpec({});
+      log.info(`    ${adapter.agentId}: probing (${spec.bin})...`);
       const models = await runtime.discoverModels(spec);
       if (models.length > 0) {
         registry.markAvailable(adapter.agentId);
         registry.setModels(adapter.agentId, models);
-        log.debug(`  Discovered ${models.length} model(s) for ${adapter.agentId}`);
+        log.info(`    ${adapter.agentId}: ${models.length} model(s)`);
+      } else {
+        log.info(`    ${adapter.agentId}: reachable but no models reported`);
       }
-    } catch {
-      // Agent not available — skip silently
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      log.info(`    ${adapter.agentId}: not available — ${reason}`);
     }
   }
   registry.discoveryDone = true;
@@ -246,9 +252,6 @@ app.listen(port, host, () => {
       }
       const summary = [...byAgent.entries()].map(([id, n]) => `${id} (${n})`).join(", ");
       log.info(`  agents: ${summary}`);
-    } else {
-      const adapters = registry.listAdapters();
-      log.info(`  agents: ${adapters.map((a) => a.agentId).join(", ")} (no models discovered)`);
     }
   });
 });
