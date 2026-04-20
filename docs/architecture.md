@@ -189,3 +189,118 @@ You are a helpful assistant.
 
 Conversation:
 User: Create a hello.py file
+Assistant: Done!
+
+User: Now add error handling
+```
+
+The prompt is sent to the ACP agent as a single text content block:
+
+```typescript
+await conn.prompt({
+  sessionId,
+  prompt: [{ type: "text", text: promptText }],
+});
+```
+
+## Workspace & File Lifecycle
+
+The gateway manages a complete file lifecycle that bridges the gap between OpenAI-style file uploads and ACP agent file operations. This is a **non-standard extension** to the OpenAI API — standard OpenAI endpoints do not have workspaces or artifacts.
+
+### Inbound: Client -> Agent (file uploads)
+
+When a client sends files (as base64 data URIs in `image_url` blocks, or as `file` attachment blocks), the gateway:
+
+1. **Materializes** them to disk in the workspace directory under `uploads/`
+2. **Appends** their relative paths to the prompt text so the agent knows they exist:
+
+```
+Uploaded files (available in CWD):
+- uploads/screenshot.png
+- uploads/data.csv
+```
+
+The agent receives the file paths as text in the prompt, not the binary content. Since the agent's CWD is set to the workspace directory, it can read these files directly from disk.
+
+### During execution: Agent creates files
+
+The agent runs with its CWD set to the workspace directory. Any files it creates or modifies land in this directory. The gateway tracks file operations via ACP `tool_call` and `tool_call_update` events that include `locations` metadata.
+
+### Outbound: Agent -> Client (artifacts)
+
+After the agent finishes, the gateway scans the workspace for all files and returns artifact metadata to the client:
+
+**Non-streaming response** — an `artifacts` field in the JSON body:
+
+```json
+{
+  "id": "chatcmpl-abc123",
+  "choices": [{ "message": { "role": "assistant", "content": "Created hello.py" } }],
+  "conversation_id": "conv-xyz",
+  "artifacts": {
+    "token": "a1b2c3d4...",
+    "files": ["hello.py", "uploads/screenshot.png"],
+    "base_url": "/v1/artifacts/a1b2c3d4..."
+  }
+}
+```
+
+**Streaming response** — a final SSE event emitted before `[DONE]`:
+
+```
+data: {"conversation_id":"conv-xyz","artifacts":{"token":"a1b2c3d4...","files":["hello.py"],"base_url":"/v1/artifacts/a1b2c3d4..."}}
+
+data: [DONE]
+```
+
+The client then fetches files via separate HTTP requests:
+
+```bash
+# List all files
+curl http://localhost:4001/v1/artifacts/a1b2c3d4...
+
+# Download a specific file
+curl http://localhost:4001/v1/artifacts/a1b2c3d4.../hello.py
+```
+
+File content is **never inlined** in the chat completion response — the client always retrieves files via the artifact endpoints.
+
+### Conversation continuity
+
+Workspaces persist across requests within the same conversation. The client passes `X-Conversation-Id` header (or `conversation_id` body field) to reuse a workspace, so files from previous turns remain available to the agent.
+
+Workspaces are garbage-collected after 1 hour of inactivity (configurable via `WORKSPACE_TTL_MS`).
+
+## Working Directory Resolution
+
+The runtime resolves the agent's working directory from (in priority order):
+
+1. **Explicit `cwd` parameter** passed to `runStream`/`runStreamWithClient` (used by workspace integration)
+2. Request `optional_params` keys: `cwd`, `workspace_path`, `project_root`, `root_dir`, `path`
+3. `optional_params.metadata` (same keys)
+4. Paths extracted from message text (common parent of existing paths)
+5. `process.cwd()` (fallback)
+
+When a workspace is active, the workspace directory is passed as the explicit `cwd`, overriding all other resolution logic.
+
+## Permission Handling
+
+When an agent requests permission (e.g. to edit a file), the client automatically selects an allow option:
+
+1. Prefer `allow_always`
+2. Fall back to `allow_once`
+3. If no allow option exists, cancel the request
+
+This behavior can be overridden by setting the permission mode on the `AgentClient` instance.
+
+## Agent Isolation
+
+The gateway implements a three-tier isolation system to limit what agents can access. See [sandboxing.md](sandboxing.md) for the full reference.
+
+| Mode | Mechanism | Auto-detection |
+|------|-----------|----------------|
+| Docker | Full container namespace isolation | `docker image inspect acp-gateway-agent` succeeds |
+| Sandbox | OS-level file/network isolation (`--sandbox` flag) | Default when Docker is unavailable |
+| Direct | No OS-level isolation | Explicit opt-in via `AGENT_ISOLATION=direct` |
+
+All modes include **workspace-scoped permission filtering** in `client.ts`, which denies agent permission requests for paths outside the workspace directory. This is the baseline defense layer that works regardless of isolation mode.

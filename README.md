@@ -76,11 +76,20 @@ See [docs/api.md](docs/api.md) for full request/response schemas.
 
 ## Workspaces & Artifacts
 
-Each conversation gets an isolated workspace directory. Files uploaded via base64 `image_url` data URIs or attachments are automatically materialized into this workspace, and the agent's CWD is set to it. Files created by the agent are also accessible after the response completes.
+Each conversation gets an isolated workspace directory. The gateway manages a complete file lifecycle between the client and the ACP agent. See [docs/architecture.md](docs/architecture.md) for the full internal details.
 
-**Conversation ID** — pass `X-Conversation-Id` header or `conversation_id` body param to maintain conversation continuity across requests. The response includes the `X-Conversation-Id` header and (for non-streaming) the `conversation_id` field.
+### How files flow in (uploads)
 
-**Artifacts** — after a response completes, the `artifacts` field (or a final SSE event in streaming mode) provides a token-based URL for accessing workspace files:
+Files sent by the client (base64 `image_url` data URIs or `file` attachment blocks in messages) are automatically decoded and written to the workspace under `uploads/`. The agent's CWD is set to the workspace directory, and the prompt includes the list of uploaded file paths so the agent can access them directly from disk.
+
+### How files flow out (artifacts)
+
+Any files the agent creates during execution land in the workspace. After the response completes, the gateway returns artifact metadata — a token and a file list — so the client can download them:
+
+- **Non-streaming**: the JSON response includes an `artifacts` field and a `conversation_id` field
+- **Streaming**: a final SSE event with `artifacts` is emitted before the `[DONE]` marker
+
+File content is **never inlined** in the chat completion response. The client retrieves files via separate HTTP requests:
 
 ```bash
 # List files in workspace
@@ -90,7 +99,16 @@ curl http://localhost:4001/v1/artifacts/<token>
 curl http://localhost:4001/v1/artifacts/<token>/path/to/file.py
 ```
 
+### Conversation continuity
+
+Pass `X-Conversation-Id` header or `conversation_id` body param to reuse a workspace across requests. Files from previous turns remain available to the agent. The response always includes `X-Conversation-Id` (header) and `conversation_id` (body field in non-streaming mode).
+
 Workspaces are automatically garbage-collected after 1 hour of inactivity (configurable via `WORKSPACE_TTL_MS`).
+
+### Prompt translation
+
+The gateway converts the OpenAI `messages` array into a single plaintext transcript for the ACP agent (system messages, user/assistant/tool turns). The gateway does not inject additional instructions — the prompt is a faithful translation of what the client sent. See [docs/architecture.md](docs/architecture.md#prompt-translation) for the full conversion rules.
+
 
 ## Model Routing
 

@@ -72,9 +72,17 @@ Any additional fields are forwarded as `optional_params` to the adapter.
     "prompt_tokens": 0,
     "completion_tokens": 0,
     "total_tokens": 0
+  },
+  "conversation_id": "a1b2c3d4e5f6...",
+  "artifacts": {
+    "token": "f6e5d4c3b2a1...",
+    "files": ["output.py"],
+    "base_url": "/v1/artifacts/f6e5d4c3b2a1..."
   }
 }
 ```
+
+The `conversation_id` is always present. The `artifacts` field is only included when the agent created or modified files in the workspace. See [Artifacts](#artifacts) below for how to retrieve file content.
 
 **Streaming response:**
 
@@ -85,8 +93,12 @@ data: {"id":"chatcmpl-abc123","created":1700000000,"model":"acp/devin","object":
 
 data: {"id":"chatcmpl-abc124","created":1700000000,"model":"acp/devin","object":"chat.completion.chunk","choices":[{"finish_reason":"stop","index":0,"delta":{}}]}
 
+data: {"conversation_id":"a1b2c3d4...","artifacts":{"token":"f6e5d4c3...","files":["output.py"],"base_url":"/v1/artifacts/f6e5d4c3..."}}
+
 data: [DONE]
 ```
+
+The response includes an `X-Conversation-Id` header. The artifact SSE event (second to last, before `[DONE]`) is only emitted when the workspace contains files. File content is not inlined — use the artifact endpoints to retrieve files.
 
 **Error response:**
 
@@ -144,6 +156,10 @@ print(response.choices[0].message.content)
 ```
 
 ---
+
+## Artifacts
+
+The artifact endpoints let clients retrieve files created by the agent during a conversation. The `token` comes from the `artifacts` field in a chat completion response (or the final SSE event in streaming mode). File content is never inlined in chat completion responses — clients must fetch files separately via these endpoints.
 
 ### GET /v1/artifacts/:token
 
