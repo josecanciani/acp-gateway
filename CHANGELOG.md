@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [1.3.0] - 2026-04-20
 ### Added
 - Per-conversation workspace support: file uploads from OpenAI-compatible clients are materialized into workspace directories.
 - `GET /v1/artifacts/:token` endpoint to list files created by the agent during a conversation.
@@ -23,8 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/sandboxing.md` — full reference for the agent isolation system.
 - `LOG_LEVEL` environment variable to control log verbosity (`error`, `warn`, `info`, `debug`; default `info`).
 - Lightweight logger module (`src/logger.ts`).
+- Documentation for prompt translation rules, workspace file lifecycle, and artifact response format in `architecture.md`, `README.md`, and `api.md`.
 
 ### Changed
+- `messagesToPrompt()` no longer injects hardcoded instructions into the ACP prompt — the prompt is now a faithful translation of the client's messages.
 - Workspace default directory follows the XDG Base Directory Specification (`$XDG_DATA_HOME/acp-gateway/workspaces`, defaults to `~/.local/share/acp-gateway/workspaces`).
 - JSON body size limit increased from 10 MB to 50 MB to support file uploads.
 - Non-streaming responses now include `conversation_id` and `artifacts` fields.
@@ -77,7 +81,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README module descriptions corrected (`schemas.ts` is a TypeScript interface, not Zod; `client.ts` handles permissions/events, not subprocess spawning).
 - `.npmignore` now excludes `src/`, `dist-test/`, `tsconfig.test.json`, and `docs/` from published package.
 
-[Unreleased]: https://github.com/josecanciani/acp-gateway/compare/1.2.0...HEAD
+[Unreleased]: https://github.com/josecanciani/acp-gateway/compare/1.3.0...HEAD
+[1.3.0]: https://github.com/josecanciani/acp-gateway/compare/1.2.0...1.3.0
 [1.2.0]: https://github.com/josecanciani/acp-gateway/compare/1.1.0...1.2.0
 [1.1.0]: https://github.com/josecanciani/acp-gateway/compare/1.0.1...1.1.0
 [1.0.1]: https://github.com/josecanciani/acp-gateway/releases/tag/1.0.1
