@@ -23,6 +23,49 @@ import {
 
 export type IsolationMode = "docker" | "sandbox" | "direct";
 
+/** Result of spawnAgent — includes the container name for Docker cleanup. */
+interface SpawnedAgent {
+  process: ChildProcess;
+  /** Docker container name (only set in docker isolation mode). */
+  containerName?: string;
+}
+
+/**
+ * Active Docker container names, tracked so we can stop them on process exit.
+ * Containers are added when spawned and removed when killed.
+ */
+const activeContainers = new Set<string>();
+
+/** Stop a spawned agent, using `docker kill` for Docker containers. */
+function killAgent(agent: SpawnedAgent): void {
+  if (agent.containerName) {
+    activeContainers.delete(agent.containerName);
+    // docker kill is faster than docker stop and we don't need graceful shutdown
+    spawnSync("docker", ["kill", agent.containerName], { stdio: "ignore" });
+  } else {
+    agent.process.kill();
+  }
+}
+
+/** Stop all active Docker containers (called on process exit). */
+function cleanupContainers(): void {
+  for (const name of activeContainers) {
+    spawnSync("docker", ["kill", name], { stdio: "ignore" });
+  }
+  activeContainers.clear();
+}
+
+// Ensure containers are cleaned up on any exit path
+process.on("exit", cleanupContainers);
+process.on("SIGINT", () => {
+  cleanupContainers();
+  process.exit(130);
+});
+process.on("SIGTERM", () => {
+  cleanupContainers();
+  process.exit(143);
+});
+
 export interface StreamChunk {
   finish_reason: string | null;
   index: number;
@@ -163,19 +206,22 @@ export class Runtime {
   async discoverModels(spec: AgentSpec): Promise<DiscoveredModel[]> {
     const discoverCwd = process.cwd();
     // Suppress agent stderr during discovery — it produces verbose INFO logs
-    const agentProcess = this.spawnAgent(spec, discoverCwd, "ignore");
+    const agent = this.spawnAgent(spec, discoverCwd, "ignore");
 
     const spawnError = await new Promise<Error | null>((resolve) => {
-      agentProcess.on("error", (err) => resolve(err));
-      agentProcess.stdin!.on("ready", () => resolve(null));
+      agent.process.on("error", (err) => resolve(err));
+      agent.process.stdin!.on("ready", () => resolve(null));
       setTimeout(() => resolve(null), 200);
     });
 
-    if (spawnError) throw new Error(`Agent binary "${spec.bin}" not found: ${spawnError.message}`);
+    if (spawnError) {
+      killAgent(agent);
+      throw new Error(`Agent binary "${spec.bin}" not found: ${spawnError.message}`);
+    }
 
     try {
-      const input = Writable.toWeb(agentProcess.stdin!) as WritableStream<Uint8Array>;
-      const output = Readable.toWeb(agentProcess.stdout!) as ReadableStream<Uint8Array>;
+      const input = Writable.toWeb(agent.process.stdin!) as WritableStream<Uint8Array>;
+      const output = Readable.toWeb(agent.process.stdout!) as ReadableStream<Uint8Array>;
       const stream = ndJsonStream(input, output);
       const client = new AgentClient();
       const conn = new ClientSideConnection((_agent: Agent) => client as Client, stream);
@@ -222,7 +268,7 @@ export class Runtime {
         description: m.description,
       }));
     } finally {
-      agentProcess.kill();
+      killAgent(agent);
     }
   }
 
@@ -339,7 +385,7 @@ export class Runtime {
     spec: AgentSpec,
     hostCwd: string,
     stderr: "inherit" | "ignore" = "inherit",
-  ): ChildProcess {
+  ): SpawnedAgent {
     if (this.isolationMode === "docker") {
       const imageName = process.env.AGENT_DOCKER_IMAGE ?? "acp-gateway-agent";
       const containerName = `acp-${randomBytes(8).toString("hex")}`;
@@ -366,17 +412,23 @@ export class Runtime {
         ...spec.args,
       ];
 
-      return spawn("docker", dockerArgs, { stdio: ["pipe", "pipe", stderr] });
+      activeContainers.add(containerName);
+      const proc = spawn("docker", dockerArgs, { stdio: ["pipe", "pipe", stderr] });
+      // Remove from tracking if the container exits on its own
+      proc.on("exit", () => activeContainers.delete(containerName));
+      return { process: proc, containerName };
     }
 
     if (this.isolationMode === "sandbox") {
-      return spawn(spec.bin, ["--sandbox", ...spec.args], {
-        stdio: ["pipe", "pipe", stderr],
-      });
+      return {
+        process: spawn(spec.bin, ["--sandbox", ...spec.args], {
+          stdio: ["pipe", "pipe", stderr],
+        }),
+      };
     }
 
     // direct mode
-    return spawn(spec.bin, spec.args, { stdio: ["pipe", "pipe", stderr] });
+    return { process: spawn(spec.bin, spec.args, { stdio: ["pipe", "pipe", stderr] }) };
   }
 
   /**
@@ -415,18 +467,19 @@ export class Runtime {
 
     // Spawn the agent process (isolation-mode aware)
     // Forward agent stderr only at debug level
-    const agentProcess = this.spawnAgent(spec, cwd, log.level === "debug" ? "inherit" : "ignore");
+    const agent = this.spawnAgent(spec, cwd, log.level === "debug" ? "inherit" : "ignore");
 
     // Handle spawn errors (e.g. binary not found)
     const spawnError = await new Promise<Error | null>((resolve) => {
-      agentProcess.on("error", (err) => resolve(err));
+      agent.process.on("error", (err) => resolve(err));
       // If stdin is writable, the process started successfully
-      agentProcess.stdin!.on("ready", () => resolve(null));
+      agent.process.stdin!.on("ready", () => resolve(null));
       // Give it a moment to either start or fail
       setTimeout(() => resolve(null), 200);
     });
 
     if (spawnError) {
+      killAgent(agent);
       throw new Error(`Failed to spawn agent "${spec.bin}": ${spawnError.message}`);
     }
 
@@ -434,8 +487,8 @@ export class Runtime {
     const sessionCwd = this.isolationMode === "docker" ? "/workspace" : cwd;
 
     try {
-      const input = Writable.toWeb(agentProcess.stdin!) as WritableStream<Uint8Array>;
-      const output = Readable.toWeb(agentProcess.stdout!) as ReadableStream<Uint8Array>;
+      const input = Writable.toWeb(agent.process.stdin!) as WritableStream<Uint8Array>;
+      const output = Readable.toWeb(agent.process.stdout!) as ReadableStream<Uint8Array>;
 
       const stream = ndJsonStream(input, output);
       const conn = new ClientSideConnection((_agent: Agent) => client as Client, stream);
@@ -522,7 +575,7 @@ export class Runtime {
       // Ensure prompt completes
       await promptPromise;
     } finally {
-      agentProcess.kill();
+      killAgent(agent);
     }
 
     yield {
