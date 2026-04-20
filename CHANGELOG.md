@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Gateway system prompt: a default system message is prepended to every request, instructing the agent to behave as a standard chat LLM (no tool use). Configurable via `GATEWAY_SYSTEM_PROMPT` env var; set to empty string to disable.
+
+### Fixed
+- Internal model IDs (e.g. `MODEL_GPT_5_2_HIGH`) are now filtered out from model discovery results.
 
 ## [1.3.2] - 2026-04-19
 ### Fixed

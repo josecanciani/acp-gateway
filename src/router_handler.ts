@@ -11,6 +11,19 @@ import {
 import { WorkspaceManager } from "./workspace.js";
 import type { TrackedFile } from "./client.js";
 
+/**
+ * Default system prompt injected before the conversation to make the agent
+ * behave as a standard LLM endpoint. Override via GATEWAY_SYSTEM_PROMPT env
+ * var, or set it to an empty string to disable.
+ */
+const GATEWAY_SYSTEM_PROMPT =
+  process.env.GATEWAY_SYSTEM_PROMPT ??
+  `You are a helpful AI assistant exposed through an OpenAI-compatible API.
+Answer questions based on the context provided in the conversation messages.
+Do NOT use tools such as shell commands, file operations, or web browsing to answer.
+Respond directly from your knowledge and from any context the user provides in their messages.
+Keep your answers concise and relevant.`;
+
 export interface ChatCompletionRequest {
   model?: string;
   messages?: Message[];
@@ -97,8 +110,15 @@ export class RouterHandler {
       messages as Array<{ role?: string; content?: unknown }>,
     );
 
+    // Prepend gateway system prompt if configured
+    const allMessages: Message[] = [];
+    if (GATEWAY_SYSTEM_PROMPT) {
+      allMessages.push({ role: "system", content: GATEWAY_SYSTEM_PROMPT });
+    }
+    allMessages.push(...messages);
+
     // Build prompt, mentioning uploaded files if any
-    let promptText = messagesToPrompt(messages, tools) || "User: Hello";
+    let promptText = messagesToPrompt(allMessages, tools) || "User: Hello";
     if (uploadedFiles.length > 0) {
       promptText += `\n\nUploaded files (available in CWD):\n${uploadedFiles.map((f) => `- ${f}`).join("\n")}`;
     }

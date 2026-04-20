@@ -436,4 +436,34 @@ describe("ACP Router HTTP endpoints", () => {
     const traversalRes = await fetch(`${baseUrl}${artifacts.base_url}/../../../etc/passwd`);
     assert.equal(traversalRes.status, 404);
   });
+
+  it("prepends gateway system prompt to agent prompt", async () => {
+    const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "acp-mock",
+        messages: [{ role: "user", content: "prompt: dump" }],
+      }),
+    });
+    const body = (await res.json()) as {
+      choices: Array<{ message: { content: string } }>;
+    };
+    assert.equal(res.status, 200);
+    const content = body.choices[0].message.content;
+    // The default system prompt should appear in the prompt text
+    assert.ok(
+      content.includes("You are a helpful AI assistant"),
+      `expected system prompt in prompt text, got: ${content.slice(0, 200)}`,
+    );
+    assert.ok(
+      content.includes("Do NOT use tools"),
+      `expected tool restriction in prompt text, got: ${content.slice(0, 200)}`,
+    );
+    // The user message should also be present
+    assert.ok(
+      content.includes("prompt: dump"),
+      `expected user message in prompt text, got: ${content.slice(0, 200)}`,
+    );
+  });
 });

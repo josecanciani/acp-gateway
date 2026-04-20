@@ -7,6 +7,7 @@
  *
  * Behaviour is controlled by the prompt text:
  *   - Contains "echo:"  -> echoes everything after "echo:" back
+ *   - Contains "prompt:" -> echoes the full prompt text (for system prompt testing)
  *   - Contains "error"  -> throws an error during prompt
  *   - Contains "slow"   -> waits 2 s before responding
  *   - Contains "multi"  -> sends two message chunks
@@ -134,6 +135,8 @@ class MockAgent implements Agent {
         });
 
         await this.sendText(params.sessionId, `created ${filename}`);
+      } else if (text.includes("prompt:")) {
+        await this.sendText(params.sessionId, text);
       } else if (text.includes("echo:")) {
         const echoText = text.split("echo:")[1].trim();
         await this.sendText(params.sessionId, echoText);

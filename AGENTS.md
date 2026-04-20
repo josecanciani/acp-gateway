@@ -165,6 +165,7 @@ npm run test:integration
 | `HOST`                      | HTTP server bind address           | `0.0.0.0`   |
 | `LOG_LEVEL`                 | Log verbosity: `error`, `warn`, `info`, `debug` | `info` |
 | `ROUTER_DEFAULT_AGENT`      | Default agent for unknown models   | `kimi`      |
+| `GATEWAY_SYSTEM_PROMPT`     | System prompt prepended to every request (empty string disables) | *(default LLM prompt)* |
 | `WORKSPACE_BASE_DIR`        | Base directory for workspaces      | `$XDG_DATA_HOME/acp-gateway/workspaces` |
 | `WORKSPACE_TTL_MS`          | Workspace expiry (milliseconds)    | `3600000`   |
 | `AGENT_ISOLATION`           | Isolation mode: `docker`, `sandbox`, `direct`, `auto` | `auto` |

@@ -10,6 +10,13 @@ All configuration is done through environment variables and/or per-request `opti
 | `HOST` | HTTP server bind address | `0.0.0.0` |
 | `LOG_LEVEL` | Log verbosity: `error`, `warn`, `info`, `debug` | `info` |
 | `ROUTER_DEFAULT_AGENT` | Default agent for unrecognized model names | `kimi` |
+| `GATEWAY_SYSTEM_PROMPT` | System prompt prepended to every request. Set to empty string to disable | *(see below)* |
+
+### Gateway System Prompt
+
+By default the gateway prepends a system message that instructs the agent to behave as a standard LLM (answer from knowledge, no tool use). This makes the endpoint feel like a regular chat model when accessed by OpenAI-compatible clients.
+
+Set `GATEWAY_SYSTEM_PROMPT` to override the text, or set it to an empty string (`""`) to disable injection entirely — useful when callers already supply their own system prompt.
 
 ## Agent Isolation
 
