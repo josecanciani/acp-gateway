@@ -64,7 +64,7 @@ const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
  * The value is stored as a Docker label on the built image; at startup the gateway
  * compares the label against this constant and rebuilds when they differ.
  */
-const AGENT_IMAGE_VERSION = "2";
+const AGENT_IMAGE_VERSION = "3";
 
 const IMAGE_LABEL = "acp-gateway.version";
 
@@ -78,6 +78,7 @@ export function ensureDockerImage(): boolean {
   const imageName = process.env.AGENT_DOCKER_IMAGE ?? "acp-gateway-agent";
 
   // Check if image exists and has the correct version label
+  let needsNoCache = false;
   try {
     const result = spawnSync(
       "docker",
@@ -87,6 +88,9 @@ export function ensureDockerImage(): boolean {
     if (result.status === 0) {
       const currentVersion = result.stdout.trim();
       if (currentVersion === AGENT_IMAGE_VERSION) return true;
+      // Version mismatch — need --no-cache so Docker rebuilds the layers
+      // instead of just slapping a new label on the same cached image
+      needsNoCache = true;
       if (currentVersion) {
         log.info(
           `  image ${imageName} outdated (v${currentVersion} → v${AGENT_IMAGE_VERSION}), rebuilding...`,
@@ -109,6 +113,7 @@ export function ensureDockerImage(): boolean {
 
   const buildArgs = [
     "build",
+    ...(needsNoCache ? ["--no-cache"] : []),
     "--label",
     `${IMAGE_LABEL}=${AGENT_IMAGE_VERSION}`,
     "-t",
