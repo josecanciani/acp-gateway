@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [1.4.0] - 2026-04-19
 ### Added
 - Gateway system prompt: a default system message is prepended to every request, instructing the agent to behave as a standard chat LLM (no tool use). Configurable via `GATEWAY_SYSTEM_PROMPT` env var; set to empty string to disable.
 - MCP tool bridge: OpenAI-style `tools` in requests are transparently bridged to MCP tools that ACP agents can use. When an agent calls a tool, the gateway returns `tool_calls` in the OpenAI format so clients (e.g. VS Code Copilot) can execute them locally. Configurable via `TOOL_BRIDGE_ENABLED`, `TOOL_BRIDGE_COLLECTION_WINDOW_MS`, and `TOOL_BRIDGE_SYSTEM_PROMPT` env vars. See `docs/tool-bridge.md` for architecture details.
@@ -116,7 +118,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README module descriptions corrected (`schemas.ts` is a TypeScript interface, not Zod; `client.ts` handles permissions/events, not subprocess spawning).
 - `.npmignore` now excludes `src/`, `dist-test/`, `tsconfig.test.json`, and `docs/` from published package.
 
-[Unreleased]: https://github.com/josecanciani/acp-gateway/compare/1.3.2...HEAD
+[Unreleased]: https://github.com/josecanciani/acp-gateway/compare/1.4.0...HEAD
+[1.4.0]: https://github.com/josecanciani/acp-gateway/compare/1.3.2...1.4.0
 [1.3.2]: https://github.com/josecanciani/acp-gateway/compare/1.3.1...1.3.2
 [1.3.1]: https://github.com/josecanciani/acp-gateway/compare/1.3.0...1.3.1
 [1.3.0]: https://github.com/josecanciani/acp-gateway/compare/1.2.0...1.3.0
