@@ -6,7 +6,7 @@ import { v4 as uuidv4 } from "uuid";
 import { Registry } from "./registry.js";
 import { KimiAdapter, DevinAdapter } from "./adapters/index.js";
 import { RouterHandler, type ChatCompletionRequest } from "./router_handler.js";
-import { Runtime } from "./runtime.js";
+import { Runtime, detectIsolationMode } from "./runtime.js";
 import { WorkspaceManager } from "./workspace.js";
 
 const app = express();
@@ -18,13 +18,16 @@ const registry = new Registry(defaultAgent);
 registry.register(new KimiAdapter());
 registry.register(new DevinAdapter());
 
+// Detect isolation mode at startup
+const isolationMode = detectIsolationMode();
+
 // Set up workspace manager
 const workspaces = new WorkspaceManager();
-const handler = new RouterHandler(registry, workspaces);
+const handler = new RouterHandler(registry, workspaces, isolationMode);
 
 // Discover available models from each agent at startup
 async function discoverAllModels(): Promise<void> {
-  const runtime = new Runtime();
+  const runtime = new Runtime(isolationMode);
   for (const adapter of registry.listAdapters()) {
     try {
       const spec = adapter.buildSpec({});
@@ -234,6 +237,7 @@ app.listen(port, host, () => {
    ╚══════════════════════════════════════╝
 
    Listening on http://${host}:${port}
+   Isolation: ${isolationMode}
   `);
 
   // Discover models in the background after server starts

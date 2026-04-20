@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `WorkspaceManager` module (`src/workspace.ts`) for workspace lifecycle management with automatic GC.
 - File tracking from ACP `tool_call` and `tool_call_update` events (`TrackedFile` in client).
 - `WORKSPACE_BASE_DIR` and `WORKSPACE_TTL_MS` environment variables.
+- Three-tier agent isolation system: Docker (full container isolation), Sandbox (`--sandbox` flag for OS-level isolation), and Direct (no isolation).
+- Workspace-scoped permission filtering in `AgentClient`: denies agent permission requests for paths outside the conversation workspace.
+- `AGENT_ISOLATION` environment variable to override isolation mode auto-detection (`docker`, `sandbox`, `direct`, `auto`).
+- `AGENT_DOCKER_IMAGE` environment variable to configure the Docker isolation image name.
+- `docker/agent/Dockerfile` and `install-devin.sh` for building the agent isolation container image.
+- `npm run docker:build` script to build the agent isolation Docker image.
+- Unit tests for permission filtering and event queue (`test/client.test.ts`).
+- `docs/sandboxing.md` — full reference for the agent isolation system.
 
 ### Changed
 - Workspace default directory follows the XDG Base Directory Specification (`$XDG_DATA_HOME/acp-gateway/workspaces`, defaults to `~/.local/share/acp-gateway/workspaces`).
@@ -20,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Non-streaming responses now include `conversation_id` and `artifacts` fields.
 - Streaming responses emit artifact metadata as a final SSE event before `[DONE]`.
 - `Runtime.runStreamWithClient()` exposes both stream and client for post-stream file tracking.
+- `Runtime` now accepts an `isolationMode` parameter and spawns agents accordingly via `spawnAgent()`.
+- `AgentClient` constructor now accepts an optional `workspaceDir` parameter for path-scoped permission filtering.
+- Server startup banner displays the active isolation mode.
 
 ## [1.2.0] - 2026-04-19
 ### Added

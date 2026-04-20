@@ -1,3 +1,4 @@
+import path from "node:path";
 import type {
   Client,
   RequestPermissionRequest,
@@ -29,9 +30,15 @@ export class AgentClient implements Client {
   permissionMode: string;
   /** Files touched by tool calls during this session. */
   trackedFiles: TrackedFile[] = [];
+  /**
+   * When set, permission requests for paths outside this directory are denied.
+   * Works in all isolation modes as the baseline defence layer.
+   */
+  workspaceDir?: string;
 
-  constructor(permissionMode = "auto_allow") {
+  constructor(permissionMode = "auto_allow", workspaceDir?: string) {
     this.permissionMode = permissionMode.trim().toLowerCase();
+    this.workspaceDir = workspaceDir;
   }
 
   /** Push an event to the queue, or wake a waiting consumer. */
@@ -73,6 +80,11 @@ export class AgentClient implements Client {
       return { outcome: { outcome: "cancelled" } };
     }
 
+    // Workspace-scoped permission filtering: deny paths outside the workspace
+    if (this.workspaceDir && !this.isPathAllowed(params)) {
+      return { outcome: { outcome: "cancelled" } };
+    }
+
     const options = Array.isArray(params.options) ? params.options : [];
     const chosenOptionId = pickPermissionOption(
       options.map((o) => ({
@@ -91,6 +103,54 @@ export class AgentClient implements Client {
     }
 
     return { outcome: { outcome: "cancelled" } };
+  }
+
+  /**
+   * Check whether a permission request targets a path within the workspace.
+   * Returns true (allowed) when no path can be extracted (non-file operations)
+   * or when the path is inside workspaceDir.
+   */
+  private isPathAllowed(params: RequestPermissionRequest): boolean {
+    const requestedPaths = this.extractPaths(params);
+    if (requestedPaths.length === 0) return true; // non-path permissions are allowed
+
+    const wsDir = path.resolve(this.workspaceDir!);
+    for (const p of requestedPaths) {
+      const resolved = path.resolve(p);
+      if (!resolved.startsWith(wsDir + path.sep) && resolved !== wsDir) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Extract file paths from a permission request.
+   * Looks in toolCall.locations[].path and toolCall.rawInput.path.
+   */
+  private extractPaths(params: RequestPermissionRequest): string[] {
+    const paths: string[] = [];
+    const tc = params.toolCall as Record<string, unknown> | undefined;
+    if (!tc) return paths;
+
+    const locations = tc.locations as Array<{ path?: string }> | undefined;
+    if (Array.isArray(locations)) {
+      for (const loc of locations) {
+        if (typeof loc?.path === "string" && loc.path.trim()) {
+          paths.push(loc.path.trim());
+        }
+      }
+    }
+
+    const rawInput = tc.rawInput as Record<string, unknown> | undefined;
+    if (rawInput) {
+      for (const key of ["path", "file_path", "directory", "dir", "cwd"]) {
+        const val = rawInput[key];
+        if (typeof val === "string" && val.trim()) paths.push(val.trim());
+      }
+    }
+
+    return paths;
   }
 
   async sessionUpdate(params: SessionNotification): Promise<void> {

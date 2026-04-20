@@ -1,5 +1,8 @@
-import { spawn } from "node:child_process";
+import { spawn, execSync, type ChildProcess } from "node:child_process";
 import { Writable, Readable } from "node:stream";
+import { randomBytes } from "node:crypto";
+import { existsSync, realpathSync } from "node:fs";
+import path from "node:path";
 import {
   ClientSideConnection,
   ndJsonStream,
@@ -16,6 +19,8 @@ import {
   type Message,
 } from "./utils.js";
 
+export type IsolationMode = "docker" | "sandbox" | "direct";
+
 export interface StreamChunk {
   finish_reason: string | null;
   index: number;
@@ -31,12 +36,35 @@ export interface RunStreamResult {
   client: AgentClient;
 }
 
+/** Detect the best available isolation mode at startup. */
+export function detectIsolationMode(): IsolationMode {
+  const override = (process.env.AGENT_ISOLATION ?? "auto").trim().toLowerCase();
+  if (override === "docker" || override === "sandbox" || override === "direct") return override;
+
+  // Docker: requires daemon and the agent image
+  try {
+    const imageName = process.env.AGENT_DOCKER_IMAGE ?? "acp-gateway-agent";
+    execSync(`docker image inspect ${imageName} --format "{{.Id}}"`, { stdio: "ignore" });
+    return "docker";
+  } catch {
+    // Docker not available or image not built
+  }
+
+  // Sandbox: available on macOS (seatbelt) and Linux (bwrap).
+  // We don't probe here — Devin itself fails closed if unavailable.
+  return "sandbox";
+}
+
 export class Runtime {
+  isolationMode: IsolationMode;
+
+  constructor(isolationMode?: IsolationMode) {
+    this.isolationMode = isolationMode ?? "direct";
+  }
   /** Discover available models by spawning an agent, doing the ACP handshake, and reading the session response. */
   async discoverModels(spec: AgentSpec): Promise<DiscoveredModel[]> {
-    const agentProcess = spawn(spec.bin, spec.args, {
-      stdio: ["pipe", "pipe", "inherit"],
-    });
+    const discoverCwd = process.cwd();
+    const agentProcess = this.spawnAgent(spec, discoverCwd);
 
     const spawnError = await new Promise<Error | null>((resolve) => {
       agentProcess.on("error", (err) => resolve(err));
@@ -58,7 +86,10 @@ export class Runtime {
         clientCapabilities: {},
       });
 
-      const session = await conn.newSession({ cwd: process.cwd(), mcpServers: [] });
+      const session = await conn.newSession({
+        cwd: this.isolationMode === "docker" ? "/workspace" : discoverCwd,
+        mcpServers: [],
+      });
       const sessionData = session as Record<string, unknown>;
 
       // Try configOptions (ACP agents expose models as a "model" config option)
@@ -107,7 +138,6 @@ export class Runtime {
         const value = (source as Record<string, unknown>)[key];
         if (typeof value === "string" && value.trim()) {
           try {
-            const { existsSync, realpathSync } = require("node:fs");
             const p = value.startsWith("~") ? value.replace("~", process.env.HOME ?? "") : value;
             if (existsSync(p)) return realpathSync(p);
           } catch {
@@ -168,12 +198,14 @@ export class Runtime {
     messages: Message[];
     cwd?: string;
   }): RunStreamResult {
+    const cwd = opts.cwd ?? this.resolveCwd(opts.optionalParams, opts.messages);
     const client = new AgentClient(
       String(opts.optionalParams.permission_mode ?? "auto_allow")
         .trim()
         .toLowerCase(),
+      cwd,
     );
-    const stream = this.runStreamInternal({ ...opts, client });
+    const stream = this.runStreamInternal({ ...opts, cwd, client });
     return { stream, client };
   }
 
@@ -185,12 +217,83 @@ export class Runtime {
     /** If provided, overrides all CWD resolution logic. */
     cwd?: string;
   }): AsyncGenerator<StreamChunk> {
+    const cwd = opts.cwd ?? this.resolveCwd(opts.optionalParams, opts.messages);
     const client = new AgentClient(
       String(opts.optionalParams.permission_mode ?? "auto_allow")
         .trim()
         .toLowerCase(),
+      cwd,
     );
-    yield* this.runStreamInternal({ ...opts, client });
+    yield* this.runStreamInternal({ ...opts, cwd, client });
+  }
+
+  /**
+   * Spawn the agent process according to the current isolation mode.
+   *
+   * - direct:  spawn(bin, args)
+   * - sandbox: spawn(bin, ["--sandbox", ...args])
+   * - docker:  spawn("docker", ["run", ..., image, bin, ...args])
+   */
+  private spawnAgent(spec: AgentSpec, hostCwd: string): ChildProcess {
+    if (this.isolationMode === "docker") {
+      const imageName = process.env.AGENT_DOCKER_IMAGE ?? "acp-gateway-agent";
+      const uid = process.getuid?.() ?? 1000;
+      const gid = process.getgid?.() ?? 1000;
+      const containerName = `acp-${randomBytes(8).toString("hex")}`;
+
+      const dockerArgs = [
+        "run",
+        "--rm",
+        "-i",
+        "--name",
+        containerName,
+        "--user",
+        `${uid}:${gid}`,
+        "-v",
+        `${hostCwd}:/workspace`,
+        ...this.dockerCredentialMounts(),
+        imageName,
+        spec.bin,
+        "--sandbox",
+        ...spec.args,
+      ];
+
+      return spawn("docker", dockerArgs, { stdio: ["pipe", "pipe", "inherit"] });
+    }
+
+    if (this.isolationMode === "sandbox") {
+      return spawn(spec.bin, ["--sandbox", ...spec.args], {
+        stdio: ["pipe", "pipe", "inherit"],
+      });
+    }
+
+    // direct mode
+    return spawn(spec.bin, spec.args, { stdio: ["pipe", "pipe", "inherit"] });
+  }
+
+  /** Build Docker volume mount flags for Devin credentials. */
+  private dockerCredentialMounts(): string[] {
+    const home = process.env.HOME ?? "/tmp";
+    const mounts: string[] = [];
+
+    const configDir = process.env.DEVIN_CONFIG_DIR ?? path.join(home, ".config", "devin");
+    if (existsSync(configDir)) {
+      mounts.push("-v", `${configDir}:/home/agent/.config/devin:ro`);
+    }
+
+    const credsFile =
+      process.env.DEVIN_CREDENTIALS_FILE ??
+      path.join(home, ".local", "share", "devin", "credentials.toml");
+    if (existsSync(credsFile)) {
+      mounts.push("-v", `${credsFile}:/home/agent/.local/share/devin/credentials.toml:ro`);
+    }
+
+    const mcpDir = process.env.DEVIN_MCP_DIR ?? path.join(home, ".local", "share", "devin", "mcp");
+    if (existsSync(mcpDir)) {
+      mounts.push("-v", `${mcpDir}:/home/agent/.local/share/devin/mcp:ro`);
+    }
+
+    return mounts;
   }
 
   private async *runStreamInternal(opts: {
@@ -206,10 +309,8 @@ export class Runtime {
     const cwd = opts.cwd ?? this.resolveCwd(optionalParams, messages);
     const mcpServers = (optionalParams.mcp_servers as unknown[]) ?? [];
 
-    // Spawn the agent process
-    const agentProcess = spawn(spec.bin, spec.args, {
-      stdio: ["pipe", "pipe", "inherit"],
-    });
+    // Spawn the agent process (isolation-mode aware)
+    const agentProcess = this.spawnAgent(spec, cwd);
 
     // Handle spawn errors (e.g. binary not found)
     const spawnError = await new Promise<Error | null>((resolve) => {
@@ -223,6 +324,9 @@ export class Runtime {
     if (spawnError) {
       throw new Error(`Failed to spawn agent "${spec.bin}": ${spawnError.message}`);
     }
+
+    // In Docker mode, the CWD inside the container is /workspace
+    const sessionCwd = this.isolationMode === "docker" ? "/workspace" : cwd;
 
     try {
       const input = Writable.toWeb(agentProcess.stdin!) as WritableStream<Uint8Array>;
@@ -239,7 +343,7 @@ export class Runtime {
 
       // Create session
       const session = await conn.newSession({
-        cwd,
+        cwd: sessionCwd,
         mcpServers: mcpServers as Array<{ name: string; uri: string }>,
       });
       const sessionId = session.sessionId;

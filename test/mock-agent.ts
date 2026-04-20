@@ -138,6 +138,7 @@ class MockAgent implements Agent {
         const echoText = text.split("echo:")[1].trim();
         await this.sendText(params.sessionId, echoText);
       } else if (text.includes("permission")) {
+        const permPath = path.join(session.cwd, "test-file.txt");
         const resp = await this.connection.requestPermission({
           sessionId: params.sessionId,
           toolCall: {
@@ -145,8 +146,8 @@ class MockAgent implements Agent {
             title: "Test operation",
             kind: "edit",
             status: "pending",
-            locations: [{ path: "/test/file.txt" }],
-            rawInput: { path: "/test/file.txt" },
+            locations: [{ path: permPath }],
+            rawInput: { path: permPath },
           },
           options: [
             { kind: "allow_once", name: "Allow", optionId: "allow" },

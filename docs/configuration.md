@@ -10,6 +10,15 @@ All configuration is done through environment variables and/or per-request `opti
 | `HOST` | HTTP server bind address | `0.0.0.0` |
 | `ROUTER_DEFAULT_AGENT` | Default agent for unrecognized model names | `kimi` |
 
+## Agent Isolation
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `AGENT_ISOLATION` | Override auto-detection: `docker`, `sandbox`, `direct`, `auto` | `auto` |
+| `AGENT_DOCKER_IMAGE` | Docker image name for Docker isolation mode | `acp-gateway-agent` |
+
+See [sandboxing.md](sandboxing.md) for the full isolation reference.
+
 ## Adapter Settings
 
 Each adapter reads its settings from a three-tier hierarchy (highest priority first):

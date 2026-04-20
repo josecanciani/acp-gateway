@@ -216,16 +216,7 @@ export function messagesToPrompt(messages: Message[], tools?: ToolDef[]): string
     base = convoParts.join("\n\n").trim();
   }
 
-  return (
-    base +
-    toolNote +
-    "\n\nImportant:" +
-    "\n- Do the work directly in the workspace when the user asks to create, edit or run files." +
-    "\n- Prefer non-interactive commands." +
-    "\n- For scaffolders like Vite, always pass explicit path/name and template." +
-    "\n- If the latest scaffolder is incompatible with the installed Node.js, use a compatible command instead of stopping." +
-    "\n- Do not only describe a plan when you can execute the task."
-  ).trim();
+  return (base + toolNote).trim();
 }
 
 const UNIX_PATH_RE = /\/(?:[^\s'":<>|]+\/?)+/g;

@@ -29,15 +29,21 @@ acp-gateway/
       devin.ts            # DevinAdapter (bin: devin, args: ["acp"])
       kimi.ts             # KimiAdapter (bin: kimi, args: ["acp"], mode: "code")
       index.ts            # Barrel export
+  docker/
+    agent/
+      Dockerfile          # Agent isolation container image
+      install-devin.sh    # Devin CLI installer for Docker builds
   docs/
     architecture.md       # Internal architecture overview
     api.md                # API endpoint reference
     configuration.md      # Full configuration reference
     adapters.md           # Adapter system documentation
+    sandboxing.md         # Agent isolation reference
   test/
     registry.test.ts      # Unit tests for adapter resolution
     utils.test.ts         # Unit tests for message formatting and utilities
     workspace.test.ts     # Unit tests for workspace manager
+    client.test.ts        # Unit tests for permission filtering and event queue
     mock-agent.ts         # Mock ACP agent for testing (echoes, errors, permissions, files)
     integration/
       router.integration-test.ts  # HTTP endpoint integration tests
@@ -47,10 +53,10 @@ acp-gateway/
 
 ## Architecture
 
-- **`src/serve.ts`** is the entry point; creates the Express server, registers routes, and starts listening. Not imported by tests.
+- **`src/serve.ts`** is the entry point; creates the Express server, detects isolation mode at startup, registers routes, and starts listening. Not imported by tests.
 - **`src/router_handler.ts`** converts OpenAI-compatible chat completion requests into ACP agent calls. Exposes `streaming()` (async generator), `streamingWithContext()` (workspace-aware), and `completion()` (returns full response). Tests import this.
-- **`src/runtime.ts`** spawns an ACP agent subprocess via `child_process.spawn`, establishes the ACP connection over stdio using the SDK's `ndJsonStream` and `ClientSideConnection`, manages the protocol lifecycle (initialize → newSession → unstable_setSessionModel → setSessionMode → prompt), and yields streaming chunks. Also exposes `runStreamWithClient()` (returns both stream and client) and `discoverModels()`.
-- **`src/client.ts`** implements the ACP `Client` interface. Handles `sessionUpdate` events (text chunks, finished signals), `requestPermission` (auto-allows by default), tracks file locations from `tool_call`/`tool_call_update` events, and provides an async event queue for consumers.
+- **`src/runtime.ts`** spawns an ACP agent subprocess using `spawnAgent()` (isolation-mode-aware), establishes the ACP connection over stdio using the SDK's `ndJsonStream` and `ClientSideConnection`, manages the protocol lifecycle (initialize → newSession → unstable_setSessionModel → setSessionMode → prompt), and yields streaming chunks. Supports three isolation modes: docker, sandbox, direct. Also exposes `runStreamWithClient()`, `discoverModels()`, and `detectIsolationMode()`.
+- **`src/client.ts`** implements the ACP `Client` interface. Handles `sessionUpdate` events (text chunks, finished signals), `requestPermission` (auto-allows by default with workspace-scoped path filtering), tracks file locations from `tool_call`/`tool_call_update` events, and provides an async event queue for consumers.
 - **`src/workspace.ts`** manages per-conversation workspace directories. Creates isolated temp dirs, materializes uploaded files (base64 images, attachments), provides token-based artifact access, and runs periodic garbage collection.
 - **`src/registry.ts`** resolves model names to adapters using multiple strategies: explicit `agent` param → `{agentId}/{modelId}` pattern → model name pattern (`acp/devin`, `acp-devin`) → aliases (`cognition`, `moonshot`) → default agent → first registered. Returns a `ResolvedRoute { adapter, modelId? }`. Also manages discovered models.
 - **`src/schemas.ts`** defines `AgentSpec` (with optional `modelId`) and `DiscoveredModel` interfaces.
@@ -67,12 +73,25 @@ HTTP POST /v1/chat/completions
   → Registry.resolve(model, optionalParams) → { adapter, modelId? } (registry.ts)
   → Adapter.buildSpec(optionalParams) → AgentSpec (adapters/static.ts)
   → Runtime.runStreamWithClient(spec, prompt, optionalParams, messages, cwd) (runtime.ts)
-    → spawn(bin, args) → ACP connection over stdio
-    → initialize → newSession(workspace.dir) → [unstable_setSessionModel] → setSessionMode → prompt
-    → yield StreamChunk events from AgentClient queue
+    → spawnAgent(spec, cwd) → isolation-mode-aware process spawn
+    → ACP connection over stdio
+    → initialize → newSession(sessionCwd) → [unstable_setSessionModel] → setSessionMode → prompt
+    → yield StreamChunk events from AgentClient(workspaceDir) queue
   → Express formats as SSE (streaming) or JSON (non-streaming)
   → Emit artifact info (token, files) in response
 ```
+
+### Agent Isolation
+
+Three-tier isolation system (auto-detected at startup, override via `AGENT_ISOLATION`):
+
+| Mode | Spawn Strategy | Detection |
+|------|---------------|-----------|
+| Docker | `docker run --rm -i -v cwd:/workspace ... image bin --sandbox args` | `acp-gateway-agent` image exists |
+| Sandbox | `bin --sandbox args` | Default fallback |
+| Direct | `bin args` | `AGENT_ISOLATION=direct` |
+
+All modes include workspace-scoped permission filtering in `client.ts`. See `docs/sandboxing.md` for the full reference.
 
 ### Permission Handling
 
@@ -102,6 +121,7 @@ The runtime resolves the agent's CWD from (in priority order):
 | `npm run changelog`      | Parse and reformat CHANGELOG.md          |
 | `npm run changelog:check`| Validate CHANGELOG.md silently           |
 | `npm run demo:ui`        | Open WebUI via Docker (port 3000)        |
+| `npm run docker:build`   | Build Docker agent isolation image       |
 
 ## Verification
 
@@ -143,6 +163,8 @@ npm run test:integration
 | `ROUTER_DEFAULT_AGENT`      | Default agent for unknown models   | `kimi`      |
 | `WORKSPACE_BASE_DIR`        | Base directory for workspaces      | `$XDG_DATA_HOME/acp-gateway/workspaces` |
 | `WORKSPACE_TTL_MS`          | Workspace expiry (milliseconds)    | `3600000`   |
+| `AGENT_ISOLATION`           | Isolation mode: `docker`, `sandbox`, `direct`, `auto` | `auto` |
+| `AGENT_DOCKER_IMAGE`        | Docker image for Docker isolation  | `acp-gateway-agent` |
 | `DEVIN_BIN`                 | Path to Devin CLI binary           | `devin`     |
 | `DEVIN_ARGS`                | Custom arguments (space-separated) | `acp`       |
 | `DEVIN_MODE_ID`             | ACP session mode                   | *(none)*    |

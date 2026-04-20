@@ -78,10 +78,10 @@ describe("messagesToPrompt", () => {
     assert.ok(result.includes("read_file"));
   });
 
-  it("appends important instructions", () => {
+  it("does not inject extra instructions into the prompt", () => {
     const result = messagesToPrompt([{ role: "user", content: "hi" }]);
-    assert.ok(result.includes("Important:"));
-    assert.ok(result.includes("non-interactive commands"));
+    assert.ok(!result.includes("Important:"));
+    assert.ok(!result.includes("non-interactive commands"));
   });
 });
 

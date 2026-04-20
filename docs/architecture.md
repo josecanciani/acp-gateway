@@ -17,9 +17,10 @@ HTTP POST /v1/chat/completions
   -> Registry.resolve(model, optionalParams) -> { adapter, modelId? } (registry.ts)
   -> Adapter.buildSpec(optionalParams) -> AgentSpec (adapters/static.ts)
   -> Runtime.runStreamWithClient(spec, prompt, optionalParams, messages, cwd) (runtime.ts)
-     -> spawn(bin, args) -> ACP connection over stdio
-     -> initialize -> newSession(workspace.dir) -> [unstable_setSessionModel] -> setSessionMode -> prompt
-     -> yield StreamChunk events from AgentClient queue
+     -> spawnAgent(spec, cwd) -> isolation-mode-aware process spawn
+     -> ACP connection over stdio
+     -> initialize -> newSession(sessionCwd) -> [unstable_setSessionModel] -> setSessionMode -> prompt
+     -> yield StreamChunk events from AgentClient(workspaceDir) queue
   -> Express formats as SSE (streaming) or JSON (non-streaming)
   -> Emit artifact info (token, files) in response
 ```
@@ -30,6 +31,7 @@ HTTP POST /v1/chat/completions
 
 Creates the Express application, registers adapters, and starts the HTTP server. This is the only module with side effects; all other modules are pure and testable.
 
+- Detects the isolation mode at startup via `detectIsolationMode()`
 - Registers `KimiAdapter` and `DevinAdapter` into a `Registry`
 - Triggers background model discovery for all adapters on startup
 - Exposes endpoints: `GET /v1/models`, `POST /v1/chat/completions`, `GET /health`, `GET /v1/artifacts/:token`, `GET /v1/artifacts/:token/*filepath`
@@ -52,12 +54,22 @@ Converts incoming HTTP request bodies into ACP agent invocations.
 
 Spawns the agent subprocess, establishes the ACP connection, runs the protocol handshake, and streams results. **A fresh process is spawned for every request and killed when the response completes** — there is no connection pooling or process reuse.
 
-1. **Spawn** -- `child_process.spawn(bin, args)` with stdio pipes
+The runtime supports three isolation modes (see [sandboxing.md](sandboxing.md)):
+
+| Mode | Spawn Strategy |
+|------|---------------|
+| `docker` | `docker run --rm -i -v cwd:/workspace ... image bin --sandbox args` |
+| `sandbox` | `bin --sandbox args` |
+| `direct` | `bin args` |
+
+1. **Spawn** -- `spawnAgent(spec, cwd)` selects the spawn strategy based on isolation mode
 2. **Connect** -- converts Node streams to Web streams, creates `ndJsonStream` and `ClientSideConnection`
-3. **Handshake** -- `initialize()` -> `newSession(cwd, mcpServers)` -> `unstable_setSessionModel()` (if `modelId` set) -> `setSessionMode()` (optional)
+3. **Handshake** -- `initialize()` -> `newSession(sessionCwd)` -> `unstable_setSessionModel()` (if `modelId` set) -> `setSessionMode()` (optional)
 4. **Bootstrap** -- runs bootstrap commands (e.g. `/plan off`) with stream suppression
 5. **Prompt** -- sends the user prompt and polls the client event queue for text chunks
 6. **Cleanup** -- kills the agent process in a `finally` block
+
+In Docker mode, the host CWD is mounted at `/workspace` and the session CWD is translated accordingly.
 
 The runtime also exposes:
 - `runStreamWithClient(spec, prompt, optionalParams, messages, cwd?)` -- returns both the stream and the `AgentClient` instance (for post-stream file tracking)
@@ -65,10 +77,11 @@ The runtime also exposes:
 
 ### client.ts (ACP client)
 
-Implements the ACP SDK `Client` interface. Handles three responsibilities:
+Implements the ACP SDK `Client` interface. Handles four responsibilities:
 
 - **Event queue** -- `sessionUpdate` events push text chunks into a queue; consumers pull them with `pullEvent(timeoutMs)`. This decouples the ACP connection from the HTTP response stream.
 - **Permission handling** -- `requestPermission` auto-allows by default, preferring `allow_always` over `allow_once`. If no allow option is available, the request is cancelled.
+- **Workspace-scoped permission filtering** -- when `workspaceDir` is set, permission requests for paths outside the workspace are automatically denied. Path extraction checks `toolCall.locations[].path` and `toolCall.rawInput` keys (`path`, `file_path`, `directory`, `dir`, `cwd`). Non-path permissions (e.g. web search) are always allowed. See [sandboxing.md](sandboxing.md) for details.
 - **File tracking** -- `tool_call` and `tool_call_update` events with `locations` are tracked in `trackedFiles: TrackedFile[]`. After the stream completes, consumers can inspect which files the agent created or modified.
 
 ### registry.ts (model routing)
@@ -142,38 +155,37 @@ Manages per-conversation workspace directories for file materialization and arti
 
 Each workspace has: `conversationId`, `token` (random hex for secure URL access), `dir` (filesystem path), `createdAt`, `lastAccessedAt`.
 
-## Workspace & Artifact Flow
+## Prompt Translation
+
+ACP agents accept a single text prompt, not an OpenAI `messages` array. The gateway converts the structured chat history into a plaintext transcript via `messagesToPrompt()` in `utils.ts`. The gateway does not inject any additional instructions — the prompt is a faithful translation of what the client sent.
+
+**How messages are converted:**
+
+| OpenAI role | Prompt format |
+|-------------|---------------|
+| `system` | Grouped under a `System instructions:` header at the top |
+| `user` | `User: <content>` |
+| `assistant` | `Assistant: <content>` |
+| `tool` | `Tool (<name>): <content>` |
+
+Rich content blocks (arrays of `{ type: "text", text }`, nested `content` fields, `input_text`, `output_text`) are recursively flattened to plain text via `contentBlocksToText()`. Non-text content blocks (e.g. `image_url`) are stripped from the prompt text — binary data is handled separately through workspace file materialization (see below).
+
+If the request includes a `tools` array, the function names are appended as hints so the agent is aware of the client's tool definitions.
+
+**Example transformation:**
 
 ```
-1. Client sends POST /v1/chat/completions with X-Conversation-Id (or new)
-2. WorkspaceManager.getOrCreate() → creates temp dir + token
-3. materializeFiles() → base64 images/attachments written to workspace
-4. Runtime spawns agent with CWD = workspace dir
-5. Agent creates files → tracked via tool_call events in AgentClient
-6. Response includes conversation_id + artifacts { token, files[] }
-7. Client fetches GET /v1/artifacts/:token → file listing
-8. Client fetches GET /v1/artifacts/:token/path → file download
-9. Periodic GC (every 10 min) removes expired workspaces
-```
+// OpenAI messages input:
+[
+  { "role": "system", "content": "You are a helpful assistant." },
+  { "role": "user", "content": "Create a hello.py file" },
+  { "role": "assistant", "content": "Done!" },
+  { "role": "user", "content": "Now add error handling" }
+]
 
-## Working Directory Resolution
+// ACP prompt output:
+System instructions:
+You are a helpful assistant.
 
-The runtime resolves the agent's working directory from (in priority order):
-
-1. **Explicit `cwd` parameter** passed to `runStream`/`runStreamWithClient` (used by workspace integration)
-2. Request `optional_params` keys: `cwd`, `workspace_path`, `project_root`, `root_dir`, `path`
-3. `optional_params.metadata` (same keys)
-4. Paths extracted from message text (common parent of existing paths)
-5. `process.cwd()` (fallback)
-
-When a workspace is active, the workspace directory is passed as the explicit `cwd`, overriding all other resolution logic.
-
-## Permission Handling
-
-When an agent requests permission (e.g. to edit a file), the client automatically selects an allow option:
-
-1. Prefer `allow_always`
-2. Fall back to `allow_once`
-3. If no allow option exists, cancel the request
-
-This behavior can be overridden by setting the permission mode on the `AgentClient` instance.
+Conversation:
+User: Create a hello.py file

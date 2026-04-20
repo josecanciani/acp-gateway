@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from "uuid";
 import { Registry } from "./registry.js";
-import { Runtime, type StreamChunk } from "./runtime.js";
+import { Runtime, type StreamChunk, type IsolationMode } from "./runtime.js";
 import {
   normalizeIncomingMessages,
   messagesToPrompt,
@@ -58,9 +58,9 @@ export class RouterHandler {
   runtime: Runtime;
   workspaces: WorkspaceManager;
 
-  constructor(registry: Registry, workspaces?: WorkspaceManager) {
+  constructor(registry: Registry, workspaces?: WorkspaceManager, isolationMode?: IsolationMode) {
     this.registry = registry;
-    this.runtime = new Runtime();
+    this.runtime = new Runtime(isolationMode);
     this.workspaces = workspaces ?? new WorkspaceManager();
   }
 

@@ -121,6 +121,29 @@ You can also pass `"agent": "devin"` in the request body to explicitly select an
 
 Set `ROUTER_DEFAULT_AGENT` to choose the fallback agent for unrecognized model names (default: `kimi`).
 
+## Agent Isolation
+
+The gateway implements a three-tier isolation system to limit what spawned agents can access:
+
+| Mode | Mechanism | When used |
+|------|-----------|-----------|
+| **Docker** | Full container namespace isolation | `acp-gateway-agent` image is available |
+| **Sandbox** | OS-level file/network isolation via `--sandbox` | Default when Docker is unavailable |
+| **Direct** | No OS-level isolation | Explicit opt-in via `AGENT_ISOLATION=direct` |
+
+All modes include **workspace-scoped permission filtering** — the gateway automatically denies agent permission requests targeting paths outside the conversation workspace.
+
+```bash
+# Override auto-detection
+AGENT_ISOLATION=sandbox npm start
+
+# Build and use the Docker isolation image
+npm run docker:build
+AGENT_ISOLATION=docker npm start
+```
+
+See [docs/sandboxing.md](docs/sandboxing.md) for the full reference.
+
 ## Configuration
 
 ### Server
@@ -132,6 +155,8 @@ Set `ROUTER_DEFAULT_AGENT` to choose the fallback agent for unrecognized model n
 | `ROUTER_DEFAULT_AGENT` | Default agent for unknown models | `kimi` |
 | `WORKSPACE_BASE_DIR` | Base directory for conversation workspaces | `$XDG_DATA_HOME/acp-gateway/workspaces` |
 | `WORKSPACE_TTL_MS` | Workspace expiry time in milliseconds | `3600000` (1 hour) |
+| `AGENT_ISOLATION` | Isolation mode: `docker`, `sandbox`, `direct`, `auto` | `auto` |
+| `AGENT_DOCKER_IMAGE` | Docker image name for Docker isolation | `acp-gateway-agent` |
 
 ### Adapter Settings
 
@@ -196,11 +221,16 @@ src/
     devin.ts        DevinAdapter
     kimi.ts         KimiAdapter
     index.ts        Barrel export
+docker/
+  agent/
+    Dockerfile      Agent isolation container image
+    install-devin.sh  Devin CLI installer for Docker builds
 docs/
   architecture.md   Internal architecture overview
   api.md            API endpoint reference
   configuration.md  Full configuration reference
   adapters.md       Adapter system documentation
+  sandboxing.md     Agent isolation reference
 test/
   *.test.ts         Unit tests (node:test)
   mock-agent.ts     Mock ACP agent for testing
