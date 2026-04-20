@@ -45,33 +45,50 @@ interface SpawnedAgent {
  */
 const activeContainers = new Set<string>();
 
+/**
+ * All active agent processes, tracked so we can kill them on process exit.
+ * This covers sandbox and direct modes where there are no Docker containers.
+ */
+const activeAgents = new Set<SpawnedAgent>();
+
 /** Stop a spawned agent, using `docker kill` for Docker containers. */
 function killAgent(agent: SpawnedAgent): void {
+  activeAgents.delete(agent);
   if (agent.containerName) {
     activeContainers.delete(agent.containerName);
     // docker kill is faster than docker stop and we don't need graceful shutdown
     spawnSync("docker", ["kill", agent.containerName], { stdio: "ignore" });
   } else {
-    agent.process.kill();
+    agent.process.kill("SIGKILL");
   }
 }
 
-/** Stop all active Docker containers (called on process exit). */
-function cleanupContainers(): void {
+/** Stop all active agents and Docker containers (called on process exit). */
+function cleanupAll(): void {
+  for (const agent of activeAgents) {
+    if (!agent.containerName) {
+      try {
+        agent.process.kill("SIGKILL");
+      } catch {
+        // already dead
+      }
+    }
+  }
+  activeAgents.clear();
   for (const name of activeContainers) {
     spawnSync("docker", ["kill", name], { stdio: "ignore" });
   }
   activeContainers.clear();
 }
 
-// Ensure containers are cleaned up on any exit path
-process.on("exit", cleanupContainers);
+// Ensure all agents are cleaned up on any exit path
+process.on("exit", cleanupAll);
 process.on("SIGINT", () => {
-  cleanupContainers();
+  cleanupAll();
   process.exit(130);
 });
 process.on("SIGTERM", () => {
-  cleanupContainers();
+  cleanupAll();
   process.exit(143);
 });
 
@@ -440,21 +457,34 @@ export class Runtime {
 
       activeContainers.add(containerName);
       const proc = spawn("docker", dockerArgs, { stdio: ["pipe", "pipe", stderr] });
+      const agent: SpawnedAgent = { process: proc, containerName };
+      activeAgents.add(agent);
       // Remove from tracking if the container exits on its own
-      proc.on("exit", () => activeContainers.delete(containerName));
-      return { process: proc, containerName };
+      proc.on("exit", () => {
+        activeContainers.delete(containerName);
+        activeAgents.delete(agent);
+      });
+      return agent;
     }
 
     if (this.isolationMode === "sandbox") {
-      return {
+      const agent: SpawnedAgent = {
         process: spawn(spec.bin, ["--sandbox", ...spec.args], {
           stdio: ["pipe", "pipe", stderr],
         }),
       };
+      activeAgents.add(agent);
+      agent.process.on("exit", () => activeAgents.delete(agent));
+      return agent;
     }
 
     // direct mode
-    return { process: spawn(spec.bin, spec.args, { stdio: ["pipe", "pipe", stderr] }) };
+    const agent: SpawnedAgent = {
+      process: spawn(spec.bin, spec.args, { stdio: ["pipe", "pipe", stderr] }),
+    };
+    activeAgents.add(agent);
+    agent.process.on("exit", () => activeAgents.delete(agent));
+    return agent;
   }
 
   /**
