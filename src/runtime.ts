@@ -388,7 +388,7 @@ export class Runtime {
   ): SpawnedAgent {
     if (this.isolationMode === "docker") {
       const imageName = process.env.AGENT_DOCKER_IMAGE ?? "acp-gateway-agent";
-      const containerName = `acp-${randomBytes(8).toString("hex")}`;
+      const containerName = `acp-gateway-${randomBytes(8).toString("hex")}`;
 
       // Run as the container's default user (agent, UID 1000) rather than
       // the host UID. On macOS Docker Desktop handles volume permission
