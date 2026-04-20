@@ -198,6 +198,7 @@ For each setting (bin, args, mode, bootstrap), the adapter checks in order:
 - **TypeScript strict mode.** All source and test files are TypeScript with strict checks enabled.
 - **ES modules only.** All files use `import`/`export`. No CommonJS.
 - **No hardcoded duplicates.** If a value is stored in a variable, reference it — don't repeat the literal.
+- **Docker resource naming convention.** All Docker resources (containers, volumes, images) must use the `acp-gateway-` prefix so they are identifiable in Docker Desktop and CLI output (e.g. `acp-gateway-agent`, `acp-gateway-webui`, `acp-gateway-webui-data`).
 
 ## Code Style
 

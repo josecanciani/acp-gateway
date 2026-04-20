@@ -4,18 +4,25 @@ LABEL org.opencontainers.image.title="acp-gateway-agent" \
       org.opencontainers.image.description="Isolated agent execution environment for ACP Gateway" \
       org.opencontainers.image.source="https://github.com/anthropics/acp-gateway"
 
-# Install system dependencies in a single layer
-RUN apt-get update \
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install system dependencies in a single layer.
+# Cache mounts: apt caches persist across builds (even with --no-cache) to avoid
+# re-downloading packages. Requires Docker BuildKit (default since Docker 23.0).
+RUN --mount=type=cache,target=/var/cache/apt,id=apt-cache-agent,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,id=apt-lists-agent,sharing=locked \
+    apt-get update \
     && apt-get install -y --no-install-recommends \
        curl \
        git \
        ca-certificates \
-       bubblewrap \
-    && rm -rf /var/lib/apt/lists/*
+       bubblewrap
 
-# Create agent user (UID/GID 1000)
-RUN groupadd -g 1000 agent \
-    && useradd -m -u 1000 -g 1000 -s /bin/bash agent
+# Rename the default ubuntu user (UID/GID 1000) to "agent".
+# Ubuntu 24.04 ships with ubuntu:ubuntu at 1000:1000; reuse it instead of
+# creating a new user which would fail on duplicate UID/GID.
+RUN usermod -l agent -d /home/agent -m ubuntu \
+    && groupmod -n agent ubuntu
 
 # Copy and run the Devin CLI install script
 COPY install-devin.sh /tmp/install-devin.sh
