@@ -23,6 +23,15 @@ import {
 
 export type IsolationMode = "docker" | "sandbox" | "direct";
 
+/**
+ * Filter out internal/legacy model IDs that agents expose but aren't
+ * intended for end users (e.g. MODEL_GPT_5_2_HIGH, MODEL_PRIVATE_11).
+ * These use an ALL_UPPERCASE_WITH_UNDERSCORES naming convention.
+ */
+function isInternalModelId(id: string): boolean {
+  return /^[A-Z][A-Z0-9_]+$/.test(id);
+}
+
 /** Result of spawnAgent — includes the container name for Docker cleanup. */
 interface SpawnedAgent {
   process: ChildProcess;
@@ -249,11 +258,13 @@ export class Runtime {
         (opt) => opt.category === "model" || opt.id === "model",
       );
       if (modelConfig?.options?.length) {
-        return modelConfig.options.map((o) => ({
-          modelId: o.value,
-          name: o.name,
-          description: o.description,
-        }));
+        return modelConfig.options
+          .filter((o) => !isInternalModelId(o.value))
+          .map((o) => ({
+            modelId: o.value,
+            name: o.name,
+            description: o.description,
+          }));
       }
 
       // Fallback: legacy models.availableModels field
