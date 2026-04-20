@@ -60,19 +60,43 @@ export function detectIsolationMode(): IsolationMode {
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 /**
- * Ensure the Docker agent image exists, building it if necessary.
- * Should be called at startup when isolation mode is "docker".
+ * Bump this when the Dockerfile, install-devin.sh, or Docker build logic changes.
+ * The value is stored as a Docker label on the built image; at startup the gateway
+ * compares the label against this constant and rebuilds when they differ.
+ */
+const AGENT_IMAGE_VERSION = "2";
+
+const IMAGE_LABEL = "acp-gateway.version";
+
+/**
+ * Ensure the Docker agent image exists **and** is up-to-date.
+ * Compares the `acp-gateway.version` label on the existing image against
+ * AGENT_IMAGE_VERSION and rebuilds when they differ (or the image is missing).
  * Returns true if the image is ready, false if the build failed.
  */
 export function ensureDockerImage(): boolean {
   const imageName = process.env.AGENT_DOCKER_IMAGE ?? "acp-gateway-agent";
 
-  // Check if image already exists
+  // Check if image exists and has the correct version label
   try {
-    execSync(`docker image inspect ${imageName} --format "{{.Id}}"`, { stdio: "ignore" });
-    return true;
+    const result = spawnSync(
+      "docker",
+      ["image", "inspect", imageName, "--format", `{{index .Config.Labels "${IMAGE_LABEL}"}}`],
+      { stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" },
+    );
+    if (result.status === 0) {
+      const currentVersion = result.stdout.trim();
+      if (currentVersion === AGENT_IMAGE_VERSION) return true;
+      if (currentVersion) {
+        log.info(
+          `  image ${imageName} outdated (v${currentVersion} → v${AGENT_IMAGE_VERSION}), rebuilding...`,
+        );
+      } else {
+        log.info(`  image ${imageName} missing version label, rebuilding...`);
+      }
+    }
   } catch {
-    // Image not found — try to build it
+    // Image not found — will build below
   }
 
   const dockerContext = path.join(PROJECT_ROOT, "docker", "agent");
@@ -81,26 +105,35 @@ export function ensureDockerImage(): boolean {
     return false;
   }
 
-  log.info(`  building image ${imageName}...`);
+  log.info(`  building image ${imageName} (v${AGENT_IMAGE_VERSION})...`);
+
+  const buildArgs = [
+    "build",
+    "--label",
+    `${IMAGE_LABEL}=${AGENT_IMAGE_VERSION}`,
+    "-t",
+    imageName,
+    dockerContext,
+  ];
+
   if (log.level === "debug") {
     // Stream build output directly to the terminal
-    try {
-      execSync(`docker build -t ${imageName} ${dockerContext}`, { stdio: "inherit" });
-      log.info(`  image ${imageName} ready`);
+    const debugResult = spawnSync("docker", buildArgs, { stdio: "inherit" });
+    if (debugResult.status === 0) {
+      log.info(`  image ${imageName} ready (v${AGENT_IMAGE_VERSION})`);
       return true;
-    } catch {
-      log.warn(`  failed to build image ${imageName}`);
-      return false;
     }
+    log.warn(`  failed to build image ${imageName}`);
+    return false;
   }
 
   // Capture output so we can show it on failure
-  const result = spawnSync("docker", ["build", "-t", imageName, dockerContext], {
+  const result = spawnSync("docker", buildArgs, {
     stdio: ["ignore", "pipe", "pipe"],
     encoding: "utf-8",
   });
   if (result.status === 0) {
-    log.info(`  image ${imageName} ready`);
+    log.info(`  image ${imageName} ready (v${AGENT_IMAGE_VERSION})`);
     return true;
   }
 

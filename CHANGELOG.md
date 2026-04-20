@@ -5,6 +5,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Docker agent image version tracking via `AGENT_IMAGE_VERSION` constant and `acp-gateway.version` Docker label. The image is automatically rebuilt at startup when the version changes.
+- Model discovery now logs per-adapter progress at startup (probing, model count, or failure reason).
+
 ### Fixed
 - Model discovery no longer marks agents as available when their binary is missing (e.g. kimi in Docker mode). Only agents that report models are shown.
 - Docker containers now set `--hostname acp-agent-container` so agents can detect they're running in a container instead of reporting the host machine name.

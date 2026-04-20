@@ -201,6 +201,7 @@ For each setting (bin, args, mode, bootstrap), the adapter checks in order:
 - **ES modules only.** All files use `import`/`export`. No CommonJS.
 - **No hardcoded duplicates.** If a value is stored in a variable, reference it — don't repeat the literal.
 - **Docker resource naming convention.** All Docker resources (containers, volumes, images) must use the `acp-gateway-` prefix so they are identifiable in Docker Desktop and CLI output (e.g. `acp-gateway-agent`, `acp-gateway-webui`, `acp-gateway-webui-data`).
+- **Docker image versioning.** The agent Docker image is version-tracked via the `AGENT_IMAGE_VERSION` constant in `src/runtime.ts` and a `acp-gateway.version` label on the image. **Bump `AGENT_IMAGE_VERSION`** whenever you change `docker/agent/Dockerfile`, `docker/agent/install-devin.sh`, or Docker build logic in `runtime.ts`. At startup the gateway compares the label on the existing image against the constant and auto-rebuilds on mismatch.
 
 ## Code Style
 
