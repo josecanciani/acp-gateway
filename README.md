@@ -130,7 +130,7 @@ Set `ROUTER_DEFAULT_AGENT` to choose the fallback agent for unrecognized model n
 | `PORT` | HTTP server port | `4001` |
 | `HOST` | HTTP server bind address | `0.0.0.0` |
 | `ROUTER_DEFAULT_AGENT` | Default agent for unknown models | `kimi` |
-| `WORKSPACE_BASE_DIR` | Base directory for conversation workspaces | `$TMPDIR/acp-workspaces` |
+| `WORKSPACE_BASE_DIR` | Base directory for conversation workspaces | `$XDG_DATA_HOME/acp-gateway/workspaces` |
 | `WORKSPACE_TTL_MS` | Workspace expiry time in milliseconds | `3600000` (1 hour) |
 
 ### Adapter Settings

@@ -141,7 +141,7 @@ npm run test:integration
 | `PORT`                      | HTTP server port                   | `4001`      |
 | `HOST`                      | HTTP server bind address           | `0.0.0.0`   |
 | `ROUTER_DEFAULT_AGENT`      | Default agent for unknown models   | `kimi`      |
-| `WORKSPACE_BASE_DIR`        | Base directory for workspaces      | `$TMPDIR/acp-workspaces` |
+| `WORKSPACE_BASE_DIR`        | Base directory for workspaces      | `$XDG_DATA_HOME/acp-gateway/workspaces` |
 | `WORKSPACE_TTL_MS`          | Workspace expiry (milliseconds)    | `3600000`   |
 | `DEVIN_BIN`                 | Path to Devin CLI binary           | `devin`     |
 | `DEVIN_ARGS`                | Custom arguments (space-separated) | `acp`       |

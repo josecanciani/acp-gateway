@@ -30,7 +30,12 @@ export class WorkspaceManager {
   private ttlMs: number;
 
   constructor(baseDir?: string, ttlMs?: number) {
-    this.baseDir = baseDir ?? path.join(process.env.HOME ?? "/tmp", ".acp-gateway", "workspaces");
+    const xdgDataHome =
+      process.env.XDG_DATA_HOME ?? path.join(process.env.HOME ?? "/tmp", ".local", "share");
+    this.baseDir =
+      baseDir ??
+      process.env.WORKSPACE_BASE_DIR ??
+      path.join(xdgDataHome, "acp-gateway", "workspaces");
     this.ttlMs = ttlMs ?? parseInt(process.env.WORKSPACE_TTL_MS ?? String(3600_000), 10);
     mkdirSync(this.baseDir, { recursive: true });
   }
