@@ -342,10 +342,13 @@ export class Runtime {
   ): ChildProcess {
     if (this.isolationMode === "docker") {
       const imageName = process.env.AGENT_DOCKER_IMAGE ?? "acp-gateway-agent";
-      const uid = process.getuid?.() ?? 1000;
-      const gid = process.getgid?.() ?? 1000;
       const containerName = `acp-${randomBytes(8).toString("hex")}`;
 
+      // Run as the container's default user (agent, UID 1000) rather than
+      // the host UID. On macOS Docker Desktop handles volume permission
+      // translation transparently; overriding --user with the host UID
+      // (e.g. 501 on macOS) would prevent the agent from writing to its
+      // home directory (/home/agent) which is owned by UID 1000.
       const dockerArgs = [
         "run",
         "--rm",
@@ -354,8 +357,6 @@ export class Runtime {
         containerName,
         "--hostname",
         "acp-agent-container",
-        "--user",
-        `${uid}:${gid}`,
         "-v",
         `${hostCwd}:/workspace`,
         ...this.dockerCredentialMounts(),

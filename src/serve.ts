@@ -238,7 +238,9 @@ const port = parseInt(process.env.PORT ?? "4001", 10);
 const host = process.env.HOST ?? "0.0.0.0";
 
 app.listen(port, host, () => {
-  log.info(`acp-gateway listening on http://${host}:${port}`);
+  const displayHost = host === "0.0.0.0" ? "localhost" : host;
+  log.info(`acp-gateway listening on http://${displayHost}:${port}`);
+  log.info(`  OpenAI-compatible API: http://${displayHost}:${port}/v1`);
   log.info(`  isolation: ${isolationMode}`);
 
   // Discover models in the background after server starts
