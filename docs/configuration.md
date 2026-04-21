@@ -33,15 +33,6 @@ When tools are present in a request and the bridge is enabled:
 - Tool definitions are stripped from the prompt text (they become MCP tools instead)
 - The response may contain `tool_calls` with `finish_reason: "tool_calls"` instead of `stop`
 
-## Agent Isolation
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `AGENT_ISOLATION` | Override auto-detection: `docker`, `sandbox`, `direct`, `auto` | `auto` |
-| `AGENT_DOCKER_IMAGE` | Docker image name for Docker isolation mode | `acp-gateway-agent` |
-
-See [sandboxing.md](sandboxing.md) for the full isolation reference.
-
 ## Adapter Settings
 
 Each adapter reads its settings from a three-tier hierarchy (highest priority first):

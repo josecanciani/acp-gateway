@@ -54,22 +54,18 @@ Converts incoming HTTP request bodies into ACP agent invocations.
 
 Spawns the agent subprocess, establishes the ACP connection, runs the protocol handshake, and streams results. **A fresh process is spawned for every request and killed when the response completes** — there is no connection pooling or process reuse.
 
-The runtime supports three isolation modes (see [sandboxing.md](sandboxing.md)):
+Agents are always spawned as local child processes with HOME isolation and `--sandbox` (for CLIs that support it):
 
-| Mode | Spawn Strategy |
-|------|---------------|
-| `docker` | `docker run --rm -i -v cwd:/workspace ... image bin --sandbox args` |
-| `sandbox` | `bin --sandbox args` |
-| `direct` | `bin args` |
+```
+HOME=<homeDir> spawn(bin, ["--sandbox", ...args])
+```
 
-1. **Spawn** -- `spawnAgent(spec, cwd)` selects the spawn strategy based on isolation mode
+1. **Spawn** -- `spawnAgent(spec, homeDir)` creates the child process with HOME set to the conversation directory
 2. **Connect** -- converts Node streams to Web streams, creates `ndJsonStream` and `ClientSideConnection`
 3. **Handshake** -- `initialize()` -> `newSession(sessionCwd)` -> `unstable_setSessionModel()` (if `modelId` set) -> `setSessionMode()` (optional)
 4. **Bootstrap** -- runs bootstrap commands (e.g. `/plan off`) with stream suppression
 5. **Prompt** -- sends the user prompt and polls the client event queue for text chunks
 6. **Cleanup** -- kills the agent process in a `finally` block
-
-In Docker mode, the host CWD is mounted at `/workspace` and the session CWD is translated accordingly.
 
 The runtime also exposes:
 - `runStreamWithClient(spec, prompt, optionalParams, messages, cwd?)` -- returns both the stream and the `AgentClient` instance (for post-stream file tracking)
@@ -347,12 +343,12 @@ This behavior can be overridden by setting the permission mode on the `AgentClie
 
 ## Agent Isolation
 
-The gateway implements a three-tier isolation system to limit what agents can access. See [sandboxing.md](sandboxing.md) for the full reference.
+The gateway applies multiple isolation layers to constrain agent subprocesses. See [sandboxing.md](sandboxing.md) for the full reference.
 
-| Mode | Mechanism | Auto-detection |
-|------|-----------|----------------|
-| Docker | Full container namespace isolation | Docker daemon reachable (image built automatically if missing) |
-| Sandbox | OS-level file/network isolation (`--sandbox` flag) | Default when Docker is unavailable |
-| Direct | No OS-level isolation | Explicit opt-in via `AGENT_ISOLATION=direct` |
+| Layer | Scope |
+|-------|-------|
+| `--sandbox` flag | OS-level file/network restrictions (for agent CLIs that support it) |
+| HOME isolation | Each conversation gets its own `HOME` directory, preventing access to host config |
+| Workspace permission filtering | `AgentClient` denies permission requests for paths outside the workspace |
 
-All modes include **workspace-scoped permission filtering** in `client.ts`, which denies agent permission requests for paths outside the workspace directory. This is the baseline defense layer that works regardless of isolation mode.
+All layers are always active — there is no configuration toggle.

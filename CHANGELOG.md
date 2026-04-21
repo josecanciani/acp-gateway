@@ -5,6 +5,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Gateway Dockerfile: `npm run docker` builds an image with the gateway, Node.js, and agent CLIs (Devin) pre-installed, then runs it detached exposing port 4001. `npm run docker:stop` stops it.
+- `sandbox` flag on `AgentSpec` and adapters — adapters declare whether their CLI supports `--sandbox`.
+
+### Changed
+- Agent HOME isolation: each conversation gets a fake HOME directory (`<workspace-base>/<conversation-id>/`) with copied credentials and config. The agent's `HOME` env var points to this directory, eliminating cross-conversation state leakage.
+- Agents are always spawned as local child processes with `--sandbox` and HOME isolation. There is no longer any isolation mode selection or auto-detection.
+
+### Removed
+- Docker agent isolation mode (persistent container, `docker exec`, `AGENT_ISOLATION`, `AGENT_DOCKER_IMAGE` env vars, `detectIsolationMode()`, `ensureDockerImage()`, `startDockerContainer()`). The gateway itself can now be containerized via `npm run docker` instead.
+- `direct` isolation mode.
 
 ## [1.4.0] - 2026-04-19
 ### Added
@@ -50,9 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `WorkspaceManager` module (`src/workspace.ts`) for workspace lifecycle management with automatic GC.
 - File tracking from ACP `tool_call` and `tool_call_update` events (`TrackedFile` in client).
 - `WORKSPACE_BASE_DIR` and `WORKSPACE_TTL_MS` environment variables.
-- Three-tier agent isolation system: Docker (full container isolation), Sandbox (`--sandbox` flag for OS-level isolation), and Direct (no isolation).
+- Two-tier agent isolation system: Docker (persistent container with `docker exec`) and Sandbox (`--sandbox` flag for OS-level isolation).
 - Workspace-scoped permission filtering in `AgentClient`: denies agent permission requests for paths outside the conversation workspace.
-- `AGENT_ISOLATION` environment variable to override isolation mode auto-detection (`docker`, `sandbox`, `direct`, `auto`).
+- `AGENT_ISOLATION` environment variable to override isolation mode auto-detection (`docker`, `sandbox`, `auto`).
 - `AGENT_DOCKER_IMAGE` environment variable to configure the Docker isolation image name.
 - `docker/agent/Dockerfile` and `install-devin.sh` for building the agent isolation container image.
 - `npm run docker:build` script to build the agent isolation Docker image manually.

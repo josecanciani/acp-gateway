@@ -10,6 +10,7 @@ export class DevinAdapter extends StaticAdapter {
       defaultBootstrapCommands: [],
       aliases: ["devin-cli", "cognition"],
       envVarPrefix: "DEVIN",
+      sandbox: true,
     });
   }
 }

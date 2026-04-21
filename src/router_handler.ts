@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from "uuid";
 import { Registry } from "./registry.js";
-import { Runtime, type StreamChunk, type IsolationMode } from "./runtime.js";
+import { Runtime, type StreamChunk } from "./runtime.js";
 import { log } from "./logger.js";
 import {
   normalizeIncomingMessages,
@@ -103,9 +103,9 @@ export class RouterHandler {
   runtime: Runtime;
   workspaces: WorkspaceManager;
 
-  constructor(registry: Registry, workspaces?: WorkspaceManager, isolationMode?: IsolationMode) {
+  constructor(registry: Registry, workspaces?: WorkspaceManager) {
     this.registry = registry;
-    this.runtime = new Runtime(isolationMode);
+    this.runtime = new Runtime();
     this.workspaces = workspaces ?? new WorkspaceManager();
   }
 
@@ -165,8 +165,7 @@ export class RouterHandler {
     // Set up MCP bridge if tools are present
     let bridgeSetup: ReturnType<typeof prepareBridge> | undefined;
     if (useBridge) {
-      const containerCwd = this.runtime.isolationMode === "docker" ? "/workspace" : undefined;
-      bridgeSetup = prepareBridge(tools, ws.dir, containerCwd);
+      bridgeSetup = prepareBridge(tools, ws.dir);
       // Inject the bridge MCP server into optional params (for newSession)
       const existingMcp = (optionalParams.mcp_servers as unknown[]) ?? [];
       optionalParams.mcp_servers = [...existingMcp, bridgeSetup.mcpServer];

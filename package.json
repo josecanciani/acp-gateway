@@ -21,8 +21,11 @@
         "typecheck": "tsc --noEmit",
         "changelog": "npx keep-a-changelog --no-v-prefix --url https://github.com/josecanciani/acp-gateway",
         "changelog:check": "npx keep-a-changelog --no-v-prefix --url https://github.com/josecanciani/acp-gateway --quiet",
-        "demo:ui": "bash scripts/demo-ui.sh",
-        "docker:build": "docker build -t acp-gateway-agent docker/agent"
+        "demo:ui": "bash scripts/demo-ui.sh run",
+        "demo:ui:stop": "bash scripts/demo-ui.sh stop",
+        "docker": "bash scripts/docker.sh run",
+        "docker:build": "bash scripts/docker.sh build",
+        "docker:stop": "bash scripts/docker.sh stop"
     },
     "keywords": [
         "acp",

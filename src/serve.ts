@@ -6,7 +6,7 @@ import { v4 as uuidv4 } from "uuid";
 import { Registry } from "./registry.js";
 import { KimiAdapter, DevinAdapter } from "./adapters/index.js";
 import { RouterHandler, type ChatCompletionRequest } from "./router_handler.js";
-import { Runtime, detectIsolationMode, ensureDockerImage } from "./runtime.js";
+import { Runtime } from "./runtime.js";
 import { WorkspaceManager } from "./workspace.js";
 import { log } from "./logger.js";
 
@@ -19,20 +19,14 @@ const registry = new Registry(defaultAgent);
 registry.register(new KimiAdapter());
 registry.register(new DevinAdapter());
 
-// Detect isolation mode at startup; build Docker image if needed
-let isolationMode = detectIsolationMode();
-if (isolationMode === "docker" && !ensureDockerImage()) {
-  log.warn("  falling back to sandbox isolation");
-  isolationMode = "sandbox";
-}
-
 // Set up workspace manager
 const workspaces = new WorkspaceManager();
-const handler = new RouterHandler(registry, workspaces, isolationMode);
+
+const handler = new RouterHandler(registry, workspaces);
 
 // Discover available models from each agent at startup
 async function discoverAllModels(): Promise<void> {
-  const runtime = new Runtime(isolationMode);
+  const runtime = new Runtime();
   const allAdapters = registry.listAdapters();
   log.info(`  discovering models for ${allAdapters.length} adapter(s)...`);
   for (const adapter of allAdapters) {
@@ -245,7 +239,6 @@ app.listen(port, host, () => {
   const displayHost = host === "0.0.0.0" ? "localhost" : host;
   log.info(`acp-gateway listening on http://${displayHost}:${port}`);
   log.info(`  OpenAI-compatible API: http://${displayHost}:${port}/v1`);
-  log.info(`  isolation: ${isolationMode}`);
 
   // Discover models in the background after server starts
   discoverAllModels().then(() => {

@@ -10,6 +10,7 @@ export class KimiAdapter extends StaticAdapter {
       defaultBootstrapCommands: ["/plan off", "/yolo"],
       aliases: ["moonshot", "kimi-code"],
       envVarPrefix: "KIMI",
+      sandbox: true,
     });
   }
 }

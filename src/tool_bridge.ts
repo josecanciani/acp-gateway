@@ -112,50 +112,36 @@ export function toOpenAIToolCalls(calls: CollectedToolCall[]): OpenAIToolCall[] 
  * server script there, and returns the McpServerStdio config for the agent.
  *
  * @param tools         OpenAI tool definitions from the request
- * @param workspaceDir  Host-side workspace directory
- * @param containerCwd  If set, the CWD as seen inside the container (e.g. "/workspace").
- *                      Paths in the MCP config are translated so the agent can find
- *                      the bridge script and signal directory. The returned `signalDir`
- *                      and `bridgeDir` remain host paths (the gateway reads from the host).
+ * @param workspaceDir  Workspace directory
  */
-export function prepareBridge(
-  tools: OpenAITool[],
-  workspaceDir: string,
-  containerCwd?: string,
-): BridgeSetup {
+export function prepareBridge(tools: OpenAITool[], workspaceDir: string): BridgeSetup {
   const bridgeDir = join(workspaceDir, ".acp-tool-bridge");
   const signalDir = join(bridgeDir, "signals");
   mkdirSync(signalDir, { recursive: true });
 
   // Copy the bridge server script into the workspace so it's accessible
-  // in any isolation mode (Docker mounts the workspace, sandbox/direct
-  // can read it directly). Use .mjs extension so Node treats it as an
+  // from the agent process. Use .mjs extension so Node treats it as an
   // ES module regardless of the surrounding package.json.
   const bridgeScript = join(bridgeDir, "mcp_bridge_server.mjs");
   copyFileSync(BRIDGE_SERVER_PATH, bridgeScript);
 
   const mcpTools = openAIToolsToMcp(tools);
 
-  // Paths as seen by the agent: translated for Docker, host paths otherwise
-  const agentBridgeDir = containerCwd ? join(containerCwd, ".acp-tool-bridge") : bridgeDir;
-  const agentBridgeScript = join(agentBridgeDir, "mcp_bridge_server.mjs");
-  const agentSignalDir = join(agentBridgeDir, "signals");
-
   // Write config files next to the script as a fallback — some agents
   // don't forward the env vars from McpServerStdio to the spawned process.
   writeFileSync(join(bridgeDir, "tools.json"), JSON.stringify(mcpTools));
-  writeFileSync(join(bridgeDir, "config.json"), JSON.stringify({ signalDir: agentSignalDir }));
+  writeFileSync(join(bridgeDir, "config.json"), JSON.stringify({ signalDir }));
 
   // Write an agent-compatible config.json that registers the bridge as an
-  // MCP server. In Docker mode, the runtime mounts this at the agent's
-  // standard config path (~/.config/devin/config.json) so the agent
-  // discovers the tools through its native MCP integration.
+  // MCP server. The runtime copies this to the agent's HOME dir at
+  // ~/.config/devin/config.json so the agent discovers the tools through
+  // its native MCP integration.
   const mcpServerConfig = {
     command: "node",
-    args: [agentBridgeScript],
+    args: [bridgeScript],
     env: {
       BRIDGE_TOOLS_JSON: JSON.stringify(mcpTools),
-      BRIDGE_SIGNAL_DIR: agentSignalDir,
+      BRIDGE_SIGNAL_DIR: signalDir,
     },
   };
   const agentConfig = { mcpServers: { "client-tools": mcpServerConfig } };
@@ -166,10 +152,10 @@ export function prepareBridge(
     mcpServer: {
       name: "client-tools",
       command: "node",
-      args: [agentBridgeScript],
+      args: [bridgeScript],
       env: [
         { name: "BRIDGE_TOOLS_JSON", value: JSON.stringify(mcpTools) },
-        { name: "BRIDGE_SIGNAL_DIR", value: agentSignalDir },
+        { name: "BRIDGE_SIGNAL_DIR", value: signalDir },
       ],
     },
     signalDir,

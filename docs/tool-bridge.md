@@ -152,7 +152,7 @@ The gateway:
 **Signaling mechanism**: The bridge writes each `tools/call` as a JSON file in the temp dir (e.g. `call_001.json`). The gateway polls the directory or uses `fs.watch()`.
 
 This approach:
-- Works in all isolation modes (direct, sandbox, Docker)
+- Works in all isolation modes (sandbox, Docker)
 - Doesn't require network ports
 - Uses only filesystem-based IPC (universally supported)
 - The bridge script is self-contained and simple

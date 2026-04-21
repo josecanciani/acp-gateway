@@ -1,141 +1,56 @@
 # Agent Isolation & Sandboxing
 
-This document describes the three-tier isolation system that acp-gateway uses to constrain ACP agent subprocesses.
+This document describes the isolation system that acp-gateway uses to constrain ACP agent subprocesses.
 
 ## Overview
 
-When the gateway spawns an agent, it can wrap the process in an isolation layer that limits filesystem access, network reach, and other OS-level capabilities. Three modes are available — **Docker**, **Sandbox**, and **Direct** — and the gateway auto-detects the best one at startup.
+When the gateway spawns an agent, it applies multiple isolation layers to limit filesystem access, network reach, and other OS-level capabilities:
 
-On top of OS-level isolation, the `AgentClient` enforces **workspace-scoped permission filtering** in every mode, providing a baseline defense layer even when no external sandbox is present.
+1. **HOME isolation** — each conversation gets its own directory used as the agent's `HOME`, preventing access to the host's MCP servers, config, and credentials.
+2. **`--sandbox` flag** — passed to agent CLIs that support it (Devin, Kimi) for OS-level restrictions (bubblewrap on Linux, seatbelt on macOS).
+3. **Workspace permission filtering** — the `AgentClient` enforces path-based permission filtering as a baseline defense layer.
 
-## Isolation Modes
+These layers are always active — there is no configuration toggle.
 
-| Priority | Mode | Detection | Isolation |
-|----------|------|-----------|-----------|
-| 1 | Docker | Docker daemon is reachable (`docker info`) | Full namespace isolation (pid, net, mount) |
-| 2 | Sandbox | Default when Docker is unavailable | OS-level file/network restrictions via macOS seatbelt or Linux bubblewrap+seccomp |
-| 3 | Direct | Explicit opt-in or last-resort fallback | None — agent runs as a regular child process |
+## Conversation Directory Structure
 
-All three modes include workspace permission filtering (see [Workspace-Scoped Permission Filtering](#workspace-scoped-permission-filtering)).
-
-## Configuration
-
-### Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `AGENT_ISOLATION` | Override auto-detection. Values: `docker`, `sandbox`, `direct`, `auto` | `auto` |
-| `AGENT_DOCKER_IMAGE` | Docker image name for Docker mode | `acp-gateway-agent` |
-
-### Examples
-
-Force Docker isolation:
-
-```bash
-AGENT_ISOLATION=docker npm start
-```
-
-Use a custom Docker image:
-
-```bash
-AGENT_DOCKER_IMAGE=my-org/agent-sandbox:latest AGENT_ISOLATION=docker npm start
-```
-
-Disable all OS-level isolation (trusted local development):
-
-```bash
-AGENT_ISOLATION=direct npm start
-```
-
-## Auto-Detection Logic
-
-The `detectIsolationMode()` function runs once at startup and selects a mode for all subsequent requests:
-
-1. If `AGENT_ISOLATION` is set to `docker`, `sandbox`, or `direct`, use that value directly.
-2. Run `docker info` — if the Docker daemon is reachable, use **Docker** mode.
-3. Otherwise, fall back to **Sandbox** mode.
-
-When Docker mode is selected, the gateway calls `ensureDockerImage()` which checks whether the agent image exists and builds it automatically from `docker/agent/Dockerfile` if missing. If the build fails, the gateway falls back to Sandbox mode with a warning.
-
-The detected mode is logged at startup and passed to `RouterHandler`, which forwards it to the runtime on every request.
-
-## Docker Mode
-
-The strongest isolation tier. The agent process runs inside a disposable container with its own pid, network, and mount namespaces.
-
-### Container Configuration
-
-- **Workspace mount:** The conversation workspace directory is mounted at `/workspace` inside the container.
-- **Credential mount** (read-only):
-
-| Host path | Container path |
-|-----------|---------------|
-| `~/.local/share/devin/credentials.toml` | `/home/agent/.local/share/devin/credentials.toml` |
-
-Only the authentication token file is mounted. The host `config.json` is **not** mounted because it contains macOS-specific paths (MCP server commands, permission rules) that don't apply inside the container. Mounting the full `~/.local/share/devin/` directory is also avoided because it contains host-native (Mach-O) binaries that cause "Exec format error" on Linux containers.
-
-- **Container flags:**
-  - `--rm` — auto-removed on exit
-  - `--hostname acp-agent-container` — explicit hostname so agents can detect containerized execution
-  - Named `acp-<random>` to avoid collisions
-  - Runs with host UID:GID so files written to `/workspace` have correct ownership
-  - The agent binary receives `--sandbox` inside the container (defense in depth)
-
-### How It Fits in the Request Flow
+Each conversation gets a dedicated directory that serves as the agent's HOME:
 
 ```
-Runtime.spawnAgent(spec, isolationMode)
-  → docker run --rm --hostname acp-agent-container --name acp-<id> \
-      -v <workspace>:/workspace \
-      -v ~/.local/share/devin/credentials.toml:...credentials.toml:ro \
-      acp-gateway-agent <bin> <args> --sandbox
-  → ACP connection over stdio (same as Direct mode)
+<workspaces-base>/<conversation-id>/
+  .config/devin/config.json          ← bridge MCP config (if tools present)
+  .local/share/devin/credentials.toml ← copied from host for auth
+  workspace/                          ← agent CWD (project files, artifacts)
 ```
 
-## Sandbox Mode
+The `WorkspaceManager` creates this structure. The `Runtime.prepareAgentHome()` method copies credentials and bridge config into it before each agent spawn. The entire directory is cleaned up when the conversation expires.
 
-The default mode when Docker is not available. Adds the `--sandbox` flag to the agent binary invocation, which activates the agent's built-in OS-level sandbox:
+## How Agents Are Spawned
 
-- **macOS:** Uses the seatbelt sandbox (`sandbox-exec`) to restrict filesystem and network access.
-- **Linux:** Uses bubblewrap (`bwrap`) with seccomp filters.
-
-The exact restrictions depend on the agent implementation. This mode is combined with workspace permission filtering in `client.ts` for two layers of protection.
-
-### How It Fits in the Request Flow
+Every agent runs as a local child process:
 
 ```
-Runtime.spawnAgent(spec, isolationMode)
-  → spawn(bin, [...args, "--sandbox"])
-  → ACP connection over stdio
+HOME=/path/to/<conversation-id> spawn(bin, ["--sandbox", ...args])
 ```
 
-## Direct Mode
+The `--sandbox` flag is only added for adapters that declare `sandbox: true` in their spec (Devin, Kimi). Generic binaries (e.g. `node` for mock agents) don't receive it.
 
-No OS-level isolation. The agent binary is spawned as a regular child process, identical to the behavior before sandboxing was introduced.
+### What `--sandbox` Does
 
-This mode is appropriate for:
+The flag activates the agent CLI's built-in OS-level sandbox:
 
-- Trusted local development environments
-- Debugging agent behavior without sandbox interference
-- Environments where neither Docker nor the agent's sandbox flag are available
+- **macOS:** seatbelt sandbox (`sandbox-exec`) for filesystem and network restrictions.
+- **Linux:** bubblewrap (`bwrap`) with seccomp filters.
 
-Even in Direct mode, workspace permission filtering is active when a workspace directory is set.
-
-### How It Fits in the Request Flow
-
-```
-Runtime.spawnAgent(spec, isolationMode)
-  → spawn(bin, args)    // no --sandbox flag, no container
-  → ACP connection over stdio
-```
+The exact restrictions depend on the agent implementation.
 
 ## Workspace-Scoped Permission Filtering
 
-Independent of the OS-level isolation mode, the `AgentClient` implements path-based permission filtering as a baseline defense layer. This runs in all three modes.
+The `AgentClient` implements path-based permission filtering as a baseline defense layer.
 
 ### How It Works
 
-1. The `AgentClient` receives the workspace directory (derived from the per-conversation workspace or CWD resolution — see [architecture.md](architecture.md)).
+1. The `AgentClient` receives the workspace directory (derived from the per-conversation workspace).
 2. When the agent sends a `requestPermission` event, the client extracts paths from the request.
 3. If any extracted path resolves to a location **outside** the workspace, the permission is **automatically denied**.
 4. Non-path permissions (e.g. web search, network access) are always allowed.
@@ -162,36 +77,40 @@ Paths containing `..` segments are normalized (resolved to absolute paths) befor
 | Path inside workspace | Yes (normal permission logic applies) |
 | Path outside workspace | Denied automatically |
 | No path in request (e.g. web search) | Yes (normal permission logic applies) |
-| No workspace set (Direct mode, no conversation) | Yes (filtering disabled) |
+| No workspace set (model discovery) | Yes (filtering disabled) |
 
 ## Full Request Flow with Isolation
 
 ```
 HTTP POST /v1/chat/completions
-  → serve.ts (isolation mode detected at startup, passed to RouterHandler)
-  → WorkspaceManager.getOrCreate(conversationId) → workspace dir
+  → serve.ts
+  → WorkspaceManager.getOrCreate(conversationId) → workspace info (homeDir, dir)
   → RouterHandler.streamingWithContext(body, workspace)
-  → Registry.resolve(model) → Adapter → AgentSpec
-  → Runtime.runStreamWithClient(spec, prompt, ..., cwd)
-     → Runtime.spawnAgent(spec, isolationMode)
-        Docker:  docker run ... acp-gateway-agent <bin> <args> --sandbox
-        Sandbox: spawn(bin, [...args, "--sandbox"])
-        Direct:  spawn(bin, args)
+  → Registry.resolve(model) → Adapter → AgentSpec (with sandbox flag)
+  → Runtime.runStreamWithClient(spec, prompt, ..., cwd, homeDir)
+     → prepareAgentHome(homeDir, bridgeConfigPath) → copy credentials + bridge config
+     → Runtime.spawnAgent(spec, homeDir)
+        HOME=<homeDir> spawn(bin, ["--sandbox", ...args])
      → ACP connection over stdio
      → AgentClient(workspaceDir) filters permissions at runtime
   → Stream response back to client
 ```
 
+## Docker Deployment
+
+When running the gateway inside Docker (`npm run docker`), agents run inside the container just like they would locally. The container image includes the agent CLIs (Devin) pre-installed. Host credentials are mounted read-only so agents can authenticate.
+
+See `Dockerfile` for the image definition and `scripts/docker.sh` for the run script.
+
 ## Security Model Summary
 
 The isolation system provides defense in depth through multiple layers:
 
-| Layer | Scope | Active in |
-|-------|-------|-----------|
-| Docker namespaces | Process, network, filesystem isolation | Docker mode only |
-| Agent `--sandbox` flag | OS-level file/network restrictions | Docker mode, Sandbox mode |
-| Workspace permission filtering | Path-based permission denial | All modes (when workspace is set) |
-| Container auto-cleanup (`--rm`) | No persistent state after request | Docker mode only |
-| Read-only credential mounts | Prevents credential tampering | Docker mode only |
+| Layer | Scope |
+|-------|-------|
+| Agent `--sandbox` flag | OS-level file/network restrictions (for CLIs that support it) |
+| HOME isolation | Prevents access to host MCP servers and config |
+| Workspace permission filtering | Path-based permission denial (when workspace is set) |
+| Workspace GC | No persistent state after conversation expires |
 
 Each layer operates independently, so a failure in one does not compromise the others.

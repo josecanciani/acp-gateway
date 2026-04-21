@@ -33,9 +33,8 @@ acp-gateway/
       kimi.ts             # KimiAdapter (bin: kimi, args: ["acp"], mode: "code")
       index.ts            # Barrel export
   docker/
-    agent/
-      Dockerfile          # Agent isolation container image
-      install-devin.sh    # Devin CLI installer for Docker builds
+    install-devin.sh    # Devin CLI installer for Docker builds
+  Dockerfile            # Gateway Docker image
   docs/
     architecture.md       # Internal architecture overview
     api.md                # API endpoint reference
@@ -59,9 +58,9 @@ acp-gateway/
 
 ## Architecture
 
-- **`src/serve.ts`** is the entry point; creates the Express server, detects isolation mode at startup, registers routes, and starts listening. Not imported by tests.
+- **`src/serve.ts`** is the entry point; creates the Express server, registers routes, and starts listening. Not imported by tests.
 - **`src/router_handler.ts`** converts OpenAI-compatible chat completion requests into ACP agent calls. Exposes `streaming()` (async generator), `streamingWithContext()` (workspace-aware), and `completion()` (returns full response). Tests import this.
-- **`src/runtime.ts`** spawns an ACP agent subprocess using `spawnAgent()` (isolation-mode-aware), establishes the ACP connection over stdio using the SDK's `ndJsonStream` and `ClientSideConnection`, manages the protocol lifecycle (initialize → newSession → unstable_setSessionModel → setSessionMode → prompt), and yields streaming chunks. Supports three isolation modes: docker, sandbox, direct. Also exposes `runStreamWithClient()`, `discoverModels()`, and `detectIsolationMode()`.
+- **`src/runtime.ts`** spawns an ACP agent subprocess using `spawnAgent()`, establishes the ACP connection over stdio using the SDK's `ndJsonStream` and `ClientSideConnection`, manages the protocol lifecycle (initialize → newSession → unstable_setSessionModel → setSessionMode → prompt), and yields streaming chunks. Agents always run as local child processes with `--sandbox` and HOME isolation. Also exposes `runStreamWithClient()` and `discoverModels()`.
 - **`src/client.ts`** implements the ACP `Client` interface. Handles `sessionUpdate` events (text chunks, finished signals), `requestPermission` (auto-allows by default with workspace-scoped path filtering), tracks file locations from `tool_call`/`tool_call_update` events, and provides an async event queue for consumers.
 - **`src/workspace.ts`** manages per-conversation workspace directories. Creates isolated temp dirs, materializes uploaded files (base64 images, attachments), provides token-based artifact access, and runs periodic garbage collection.
 - **`src/registry.ts`** resolves model names to adapters using multiple strategies: explicit `agent` param → `{agentId}/{modelId}` pattern → model name pattern (`acp/devin`, `acp-devin`) → aliases (`cognition`, `moonshot`) → default agent → first registered. Returns a `ResolvedRoute { adapter, modelId? }`. Also manages discovered models.
@@ -91,15 +90,13 @@ HTTP POST /v1/chat/completions
 
 ### Agent Isolation
 
-Three-tier isolation system (auto-detected at startup, override via `AGENT_ISOLATION`):
+Agents are always spawned as local child processes with:
 
-| Mode | Spawn Strategy | Detection |
-|------|---------------|-----------|
-| Docker | `docker run --rm -i -v cwd:/workspace ... image bin --sandbox args` | Docker daemon reachable (image auto-built if missing) |
-| Sandbox | `bin --sandbox args` | Default fallback |
-| Direct | `bin args` | `AGENT_ISOLATION=direct` |
+- **HOME isolation** — `HOME` env var set to the conversation's homeDir
+- **`--sandbox` flag** — for CLIs that support it (Devin, Kimi)
+- **Workspace permission filtering** — denies agent requests targeting paths outside the workspace
 
-All modes include workspace-scoped permission filtering in `client.ts`. See `docs/sandboxing.md` for the full reference.
+See `docs/sandboxing.md` for the full reference.
 
 ### Permission Handling
 
@@ -128,8 +125,11 @@ The runtime resolves the agent's CWD from (in priority order):
 | `npm run typecheck`      | Type-check with tsc                      |
 | `npm run changelog`      | Parse and reformat CHANGELOG.md          |
 | `npm run changelog:check`| Validate CHANGELOG.md silently           |
-| `npm run demo:ui`        | Open WebUI via Docker (port 3000)        |
-| `npm run docker:build`   | Build Docker agent isolation image       |
+| `npm run demo:ui`        | Start Open WebUI via Docker (port 3000)  |
+| `npm run demo:ui:stop`   | Stop the Open WebUI container            |
+| `npm run docker`         | Build Docker image and run detached      |
+| `npm run docker:build`   | Build gateway Docker image only          |
+| `npm run docker:stop`    | Stop the Docker container                |
 
 ## Verification
 
@@ -173,8 +173,6 @@ npm run test:integration
 | `GATEWAY_SYSTEM_PROMPT`     | System prompt prepended to every request (empty string disables) | *(default LLM prompt)* |
 | `WORKSPACE_BASE_DIR`        | Base directory for workspaces      | `$XDG_DATA_HOME/acp-gateway/workspaces` |
 | `WORKSPACE_TTL_MS`          | Workspace expiry (milliseconds)    | `3600000`   |
-| `AGENT_ISOLATION`           | Isolation mode: `docker`, `sandbox`, `direct`, `auto` | `auto` |
-| `AGENT_DOCKER_IMAGE`        | Docker image for Docker isolation  | `acp-gateway-agent` |
 | `TOOL_BRIDGE_ENABLED`       | Enable/disable tool bridge         | `true`      |
 | `TOOL_BRIDGE_COLLECTION_WINDOW_MS` | Tool call collection window (ms) | `500` |
 | `TOOL_BRIDGE_SYSTEM_PROMPT` | System prompt when tools are present | *(built-in MCP prompt)* |

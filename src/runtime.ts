@@ -1,8 +1,6 @@
-import { spawn, execSync, spawnSync, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { Writable, Readable } from "node:stream";
-import { randomBytes } from "node:crypto";
 import { existsSync, copyFileSync, mkdirSync, realpathSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import path from "node:path";
 import {
   ClientSideConnection,
@@ -21,8 +19,6 @@ import {
   type Message,
 } from "./utils.js";
 
-export type IsolationMode = "docker" | "sandbox" | "direct";
-
 /**
  * Filter out internal/legacy model IDs that agents expose but aren't
  * intended for end users (e.g. MODEL_GPT_5_2_HIGH, MODEL_PRIVATE_11).
@@ -32,53 +28,36 @@ function isInternalModelId(id: string): boolean {
   return /^[A-Z][A-Z0-9_]+$/.test(id);
 }
 
-/** Result of spawnAgent — includes the container name for Docker cleanup. */
+/** Result of spawnAgent. */
 interface SpawnedAgent {
   process: ChildProcess;
-  /** Docker container name (only set in docker isolation mode). */
-  containerName?: string;
 }
-
-/**
- * Active Docker container names, tracked so we can stop them on process exit.
- * Containers are added when spawned and removed when killed.
- */
-const activeContainers = new Set<string>();
 
 /**
  * All active agent processes, tracked so we can kill them on process exit.
- * This covers sandbox and direct modes where there are no Docker containers.
  */
 const activeAgents = new Set<SpawnedAgent>();
 
-/** Stop a spawned agent, using `docker kill` for Docker containers. */
+/** Stop a spawned agent process. */
 function killAgent(agent: SpawnedAgent): void {
   activeAgents.delete(agent);
-  if (agent.containerName) {
-    activeContainers.delete(agent.containerName);
-    // docker kill is faster than docker stop and we don't need graceful shutdown
-    spawnSync("docker", ["kill", agent.containerName], { stdio: "ignore" });
-  } else {
+  try {
     agent.process.kill("SIGKILL");
+  } catch {
+    // already dead
   }
 }
 
-/** Stop all active agents and Docker containers (called on process exit). */
+/** Stop all active agent processes (called on process exit). */
 function cleanupAll(): void {
   for (const agent of activeAgents) {
-    if (!agent.containerName) {
-      try {
-        agent.process.kill("SIGKILL");
-      } catch {
-        // already dead
-      }
+    try {
+      agent.process.kill("SIGKILL");
+    } catch {
+      // already dead
     }
   }
   activeAgents.clear();
-  for (const name of activeContainers) {
-    spawnSync("docker", ["kill", name], { stdio: "ignore" });
-  }
-  activeContainers.clear();
 }
 
 // Ensure all agents are cleaned up on any exit path
@@ -114,127 +93,8 @@ export interface RunStreamResult {
   kill: () => void;
 }
 
-/** Detect the best available isolation mode at startup. */
-export function detectIsolationMode(): IsolationMode {
-  const override = (process.env.AGENT_ISOLATION ?? "auto").trim().toLowerCase();
-  if (override === "docker" || override === "sandbox" || override === "direct") return override;
-
-  // Docker: requires the daemon to be reachable
-  try {
-    execSync("docker info", { stdio: "ignore" });
-    return "docker";
-  } catch {
-    // Docker not available
-  }
-
-  // Sandbox: available on macOS (seatbelt) and Linux (bwrap).
-  // We don't probe here — Devin itself fails closed if unavailable.
-  return "sandbox";
-}
-
-/** Project root directory (parent of dist/). */
-const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-
-/**
- * Bump this when the Dockerfile, install-devin.sh, or Docker build logic changes.
- * The value is stored as a Docker label on the built image; at startup the gateway
- * compares the label against this constant and rebuilds when they differ.
- */
-const AGENT_IMAGE_VERSION = "5";
-
-const IMAGE_LABEL = "acp-gateway.version";
-
-/**
- * Ensure the Docker agent image exists **and** is up-to-date.
- * Compares the `acp-gateway.version` label on the existing image against
- * AGENT_IMAGE_VERSION and rebuilds when they differ (or the image is missing).
- * Returns true if the image is ready, false if the build failed.
- */
-export function ensureDockerImage(): boolean {
-  const imageName = process.env.AGENT_DOCKER_IMAGE ?? "acp-gateway-agent";
-
-  // Check if image exists and has the correct version label
-  let needsNoCache = false;
-  try {
-    const result = spawnSync(
-      "docker",
-      ["image", "inspect", imageName, "--format", `{{index .Config.Labels "${IMAGE_LABEL}"}}`],
-      { stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" },
-    );
-    if (result.status === 0) {
-      const currentVersion = result.stdout.trim();
-      if (currentVersion === AGENT_IMAGE_VERSION) return true;
-      // Version mismatch — need --no-cache so Docker rebuilds the layers
-      // instead of just slapping a new label on the same cached image
-      needsNoCache = true;
-      if (currentVersion) {
-        log.info(
-          `  image ${imageName} outdated (v${currentVersion} → v${AGENT_IMAGE_VERSION}), rebuilding...`,
-        );
-      } else {
-        log.info(`  image ${imageName} missing version label, rebuilding...`);
-      }
-    }
-  } catch {
-    // Image not found — will build below
-  }
-
-  const dockerContext = path.join(PROJECT_ROOT, "docker", "agent");
-  if (!existsSync(path.join(dockerContext, "Dockerfile"))) {
-    log.warn(`Docker isolation requested but Dockerfile not found at ${dockerContext}`);
-    return false;
-  }
-
-  log.info(`  building image ${imageName} (v${AGENT_IMAGE_VERSION})...`);
-
-  const buildArgs = [
-    "build",
-    ...(needsNoCache ? ["--no-cache"] : []),
-    "--label",
-    `${IMAGE_LABEL}=${AGENT_IMAGE_VERSION}`,
-    "-t",
-    imageName,
-    dockerContext,
-  ];
-
-  if (log.level === "debug") {
-    // Stream build output directly to the terminal
-    const debugResult = spawnSync("docker", buildArgs, { stdio: "inherit" });
-    if (debugResult.status === 0) {
-      log.info(`  image ${imageName} ready (v${AGENT_IMAGE_VERSION})`);
-      return true;
-    }
-    log.warn(`  failed to build image ${imageName}`);
-    return false;
-  }
-
-  // Capture output so we can show it on failure
-  const result = spawnSync("docker", buildArgs, {
-    stdio: ["ignore", "pipe", "pipe"],
-    encoding: "utf-8",
-  });
-  if (result.status === 0) {
-    log.info(`  image ${imageName} ready (v${AGENT_IMAGE_VERSION})`);
-    return true;
-  }
-
-  const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
-  log.warn(`  failed to build image ${imageName}`);
-  if (output) {
-    log.warn("  docker build output:");
-    for (const line of output.split("\n").slice(-30)) {
-      log.warn(`    ${line}`);
-    }
-  }
-  return false;
-}
-
 export class Runtime {
-  isolationMode: IsolationMode;
-
-  constructor(isolationMode?: IsolationMode) {
-    this.isolationMode = isolationMode ?? "direct";
-  }
+  constructor() {}
   /** Discover available models by spawning an agent, doing the ACP handshake, and reading the session response. */
   async discoverModels(spec: AgentSpec): Promise<DiscoveredModel[]> {
     const discoverCwd = process.cwd();
@@ -265,7 +125,7 @@ export class Runtime {
       });
 
       const session = await conn.newSession({
-        cwd: this.isolationMode === "docker" ? "/workspace" : discoverCwd,
+        cwd: discoverCwd,
         mcpServers: [],
       });
       const sessionData = session as Record<string, unknown>;
@@ -413,11 +273,7 @@ export class Runtime {
   }
 
   /**
-   * Spawn the agent process according to the current isolation mode.
-   *
-   * - direct:  spawn(bin, args)
-   * - sandbox: spawn(bin, ["--sandbox", ...args])
-   * - docker:  spawn("docker", ["run", ..., image, bin, ...args])
+   * Spawn the agent process with `--sandbox` (when supported) and HOME isolation.
    *
    * @param stderr  Where to send the child's stderr.
    *   "inherit" forwards to the gateway's stderr (default for prompts),
@@ -425,64 +281,25 @@ export class Runtime {
    */
   private spawnAgent(
     spec: AgentSpec,
-    hostCwd: string,
+    _hostCwd: string,
     stderr: "inherit" | "ignore" = "inherit",
-    bridgeHostConfigPath?: string,
     homeDir?: string,
   ): SpawnedAgent {
-    if (this.isolationMode === "docker") {
-      const imageName = process.env.AGENT_DOCKER_IMAGE ?? "acp-gateway-agent";
-      const containerName = `acp-gateway-${randomBytes(8).toString("hex")}`;
+    const sandboxArgs = spec.sandbox ? ["--sandbox"] : [];
 
-      // Run as the container's default user (agent, UID 1000) rather than
-      // the host UID. On macOS Docker Desktop handles volume permission
-      // translation transparently; overriding --user with the host UID
-      // (e.g. 501 on macOS) would prevent the agent from writing to its
-      // home directory (/home/agent) which is owned by UID 1000.
-      const dockerArgs = [
-        "run",
-        "--rm",
-        "-i",
-        "--name",
-        containerName,
-        "--hostname",
-        "acp-agent-container",
-        "-v",
-        `${hostCwd}:/workspace`,
-        ...this.dockerCredentialMounts(),
-        ...this.dockerBridgeConfigMounts(bridgeHostConfigPath),
-        imageName,
-        spec.bin,
-        "--sandbox",
-        ...spec.args,
-      ];
-
-      activeContainers.add(containerName);
-      const proc = spawn("docker", dockerArgs, { stdio: ["pipe", "pipe", stderr] });
-      const agent: SpawnedAgent = { process: proc, containerName };
-      activeAgents.add(agent);
-      // Remove from tracking if the container exits on its own
-      proc.on("exit", () => {
-        activeContainers.delete(containerName);
-        activeAgents.delete(agent);
-      });
-      return agent;
-    }
-
-    // sandbox and direct modes: use the conversation homeDir as HOME
-    // to isolate the agent from the host's MCP servers, config, and cache.
+    // Use the conversation homeDir as HOME to isolate the agent
+    // from the host's MCP servers, config, and cache.
     // If no homeDir is provided (e.g. model discovery), fall back to default.
     const env = homeDir ? { ...process.env, HOME: homeDir } : undefined;
 
-    const args = this.isolationMode === "sandbox" ? ["--sandbox", ...spec.args] : [...spec.args];
-
     const agent: SpawnedAgent = {
-      process: spawn(spec.bin, args, { stdio: ["pipe", "pipe", stderr], ...(env && { env }) }),
+      process: spawn(spec.bin, [...sandboxArgs, ...spec.args], {
+        stdio: ["pipe", "pipe", stderr],
+        ...(env && { env }),
+      }),
     };
     activeAgents.add(agent);
-    agent.process.on("exit", () => {
-      activeAgents.delete(agent);
-    });
+    agent.process.on("exit", () => activeAgents.delete(agent));
     return agent;
   }
 
@@ -515,40 +332,6 @@ export class Runtime {
     }
   }
 
-  /**
-   * Build Docker volume mount flags for the Devin credentials file.
-   *
-   * Only the authentication token is mounted — the host config.json contains
-   * macOS-specific paths (MCP servers, permissions) that don't apply inside
-   * the container, and mounting the whole ~/.local/share/devin/ directory
-   * would expose host-native (Mach-O) binaries that cause "Exec format error".
-   */
-  private dockerCredentialMounts(): string[] {
-    const home = process.env.HOME ?? "/tmp";
-
-    const credsFile =
-      process.env.DEVIN_CREDENTIALS_FILE ??
-      path.join(home, ".local", "share", "devin", "credentials.toml");
-    if (existsSync(credsFile)) {
-      return ["-v", `${credsFile}:/home/agent/.local/share/devin/credentials.toml:ro`];
-    }
-
-    return [];
-  }
-
-  /**
-   * Build Docker volume mount flags for the tool bridge config file.
-   *
-   * Mounts the bridge's agent-config.json at the standard Devin user config
-   * location (~/.config/devin/config.json) inside the container. This lets
-   * the agent discover the bridge MCP server through its native config
-   * loading rather than relying on newSession mcpServers or --config.
-   */
-  private dockerBridgeConfigMounts(hostConfigPath?: string): string[] {
-    if (!hostConfigPath || !existsSync(hostConfigPath)) return [];
-    return ["-v", `${hostConfigPath}:/home/agent/.config/devin/config.json:ro`];
-  }
-
   private async *runStreamInternal(opts: {
     spec: AgentSpec;
     promptText: string;
@@ -565,18 +348,17 @@ export class Runtime {
     const mcpServers = (optionalParams.mcp_servers as unknown[]) ?? [];
     const bridgeHostConfigPath = optionalParams._bridge_host_config_path as string | undefined;
 
-    // Prepare the agent's isolated HOME (sandbox/direct modes only)
-    if (opts.homeDir && this.isolationMode !== "docker") {
+    // Prepare the agent's isolated HOME (credentials + bridge config)
+    if (opts.homeDir) {
       this.prepareAgentHome(opts.homeDir, bridgeHostConfigPath);
     }
 
-    // Spawn the agent process (isolation-mode aware)
+    // Spawn the agent process
     // Forward agent stderr only at debug level
     const agent = this.spawnAgent(
       spec,
       cwd,
       log.level === "debug" ? "inherit" : "ignore",
-      bridgeHostConfigPath,
       opts.homeDir,
     );
 
@@ -598,9 +380,6 @@ export class Runtime {
       throw new Error(`Failed to spawn agent "${spec.bin}": ${spawnError.message}`);
     }
 
-    // In Docker mode, the CWD inside the container is /workspace
-    const sessionCwd = this.isolationMode === "docker" ? "/workspace" : cwd;
-
     try {
       const input = Writable.toWeb(agent.process.stdin!) as WritableStream<Uint8Array>;
       const output = Readable.toWeb(agent.process.stdout!) as ReadableStream<Uint8Array>;
@@ -616,7 +395,7 @@ export class Runtime {
 
       // Create session
       const session = await conn.newSession({
-        cwd: sessionCwd,
+        cwd,
         mcpServers: mcpServers as Array<Record<string, unknown>>,
       });
       const sessionId = session.sessionId;

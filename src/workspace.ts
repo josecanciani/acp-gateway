@@ -30,7 +30,7 @@ export class WorkspaceManager {
   private workspaces = new Map<string, WorkspaceInfo>();
   /** Reverse lookup: token → conversationId */
   private tokenIndex = new Map<string, string>();
-  private baseDir: string;
+  readonly baseDir: string;
   private ttlMs: number;
 
   constructor(baseDir?: string, ttlMs?: number) {

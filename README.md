@@ -141,23 +141,15 @@ Set `ROUTER_DEFAULT_AGENT` to choose the fallback agent for unrecognized model n
 
 ## Agent Isolation
 
-The gateway implements a three-tier isolation system to limit what spawned agents can access:
+Every agent process runs with multiple isolation layers:
 
-| Mode | Mechanism | When used |
-|------|-----------|-----------|
-| **Docker** | Full container namespace isolation | Docker daemon is available (image built automatically) |
-| **Sandbox** | OS-level file/network isolation via `--sandbox` | Default when Docker is unavailable |
-| **Direct** | No OS-level isolation | Explicit opt-in via `AGENT_ISOLATION=direct` |
+| Layer | Mechanism |
+|-------|-----------|
+| **HOME isolation** | Each conversation gets its own `HOME` directory with copied credentials |
+| **`--sandbox` flag** | OS-level file/network restrictions via bubblewrap (Linux) or seatbelt (macOS) |
+| **Permission filtering** | Agent requests targeting paths outside the workspace are automatically denied |
 
-All modes include **workspace-scoped permission filtering** — the gateway automatically denies agent permission requests targeting paths outside the conversation workspace.
-
-```bash
-# Override auto-detection
-AGENT_ISOLATION=sandbox npm start
-
-# Force Docker isolation (image is built automatically if missing)
-AGENT_ISOLATION=docker npm start
-```
+These layers are always active — there is no configuration toggle.
 
 See [docs/sandboxing.md](docs/sandboxing.md) for the full reference.
 
@@ -173,8 +165,6 @@ See [docs/sandboxing.md](docs/sandboxing.md) for the full reference.
 | `ROUTER_DEFAULT_AGENT` | Default agent for unknown models | `kimi` |
 | `WORKSPACE_BASE_DIR` | Base directory for conversation workspaces | `$XDG_DATA_HOME/acp-gateway/workspaces` |
 | `WORKSPACE_TTL_MS` | Workspace expiry time in milliseconds | `3600000` (1 hour) |
-| `AGENT_ISOLATION` | Isolation mode: `docker`, `sandbox`, `direct`, `auto` | `auto` |
-| `AGENT_DOCKER_IMAGE` | Docker image name for Docker isolation | `acp-gateway-agent` |
 
 ### Adapter Settings
 
@@ -241,9 +231,8 @@ src/
     kimi.ts         KimiAdapter
     index.ts        Barrel export
 docker/
-  agent/
-    Dockerfile      Agent isolation container image
-    install-devin.sh  Devin CLI installer for Docker builds
+  install-devin.sh  Devin CLI installer for Docker builds
+Dockerfile          Gateway Docker image
 docs/
   architecture.md   Internal architecture overview
   api.md            API endpoint reference
@@ -274,6 +263,8 @@ Open http://localhost:3000, then select an `acp/*` model to start chatting.
 
 ```bash
 npm run dev              # Build and start
+npm run docker           # Build Docker image and run detached
+npm run docker:stop      # Stop the Docker container
 npm run lint             # Lint with oxlint
 npm run format           # Format with oxfmt
 npm run format:check     # Check formatting without writing
@@ -282,7 +273,8 @@ npm run test:node        # Unit tests only
 npm run test:integration # Integration tests only
 npm run test             # Lint + format check + unit tests
 npm run test:all         # All of the above + integration tests
-npm run demo:ui          # Open WebUI via Docker (port 3000)
+npm run demo:ui          # Start Open WebUI via Docker (port 3000)
+npm run demo:ui:stop     # Stop the Open WebUI container
 ```
 
 ## Credits

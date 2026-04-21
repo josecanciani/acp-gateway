@@ -16,6 +16,8 @@ export class StaticAdapter implements Adapter {
   defaultBootstrapCommands: string[];
   aliases: string[];
   envVarPrefix: string;
+  /** Whether the CLI supports the --sandbox flag. */
+  sandbox: boolean;
 
   constructor(opts: {
     agentId: string;
@@ -25,6 +27,8 @@ export class StaticAdapter implements Adapter {
     defaultBootstrapCommands?: string[];
     aliases?: string[];
     envVarPrefix?: string;
+    /** Set to true if the CLI binary supports `--sandbox`. */
+    sandbox?: boolean;
   }) {
     this.agentId = opts.agentId.trim().toLowerCase();
     this.defaultBin = opts.defaultBin;
@@ -33,6 +37,7 @@ export class StaticAdapter implements Adapter {
     this.defaultBootstrapCommands = [...(opts.defaultBootstrapCommands ?? [])];
     this.aliases = (opts.aliases ?? []).map((a) => a.trim().toLowerCase());
     this.envVarPrefix = (opts.envVarPrefix ?? opts.agentId).toUpperCase().replace(/-/g, "_");
+    this.sandbox = opts.sandbox ?? false;
   }
 
   matches(value: string): boolean {
@@ -69,6 +74,7 @@ export class StaticAdapter implements Adapter {
       args: args.map(String),
       modeId: modeId ? String(modeId) : undefined,
       bootstrapCommands: bootstrapCommands.map(String),
+      sandbox: this.sandbox,
     };
   }
 }
