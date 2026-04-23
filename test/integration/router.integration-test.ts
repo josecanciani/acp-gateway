@@ -149,12 +149,25 @@ async function startServer(): Promise<void> {
         res.json(response);
       }
     } catch (err) {
-      res.status(500).json({
-        error: {
-          message: String(err instanceof Error ? err.message : err),
-          type: "internal_error",
-        },
-      });
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: {
+            message: String(err instanceof Error ? err.message : err),
+            type: "internal_error",
+          },
+        });
+      } else {
+        try {
+          const errMsg = String(err instanceof Error ? err.message : err);
+          res.write(
+            `data: ${JSON.stringify({ error: { message: errMsg, type: "stream_error" } })}\n\n`,
+          );
+          res.write("data: [DONE]\n\n");
+          res.end();
+        } catch {
+          // Client already disconnected
+        }
+      }
     }
   });
 
@@ -635,6 +648,59 @@ describe("ACP Router HTTP endpoints", () => {
     assert.ok(
       !choices[0].message.tool_calls,
       "should not have tool_calls when agent doesn't call tools",
+    );
+  });
+
+  it("handles agent crash mid-stream without crashing the server", async () => {
+    const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "acp-mock",
+        stream: true,
+        messages: [{ role: "user", content: "crash" }],
+      }),
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("content-type"), "text/event-stream");
+
+    // Read the SSE stream to completion
+    const text = await res.text();
+    // Should contain the partial text from before the crash
+    assert.ok(
+      text.includes("partial-before-crash"),
+      `expected partial text in stream, got: ${text.slice(0, 200)}`,
+    );
+    // Should contain the agent error message
+    assert.ok(
+      text.includes("Agent process ended unexpectedly"),
+      `expected agent error message in stream, got: ${text.slice(0, 500)}`,
+    );
+    // Should end with [DONE] (clean SSE termination)
+    assert.ok(text.includes("[DONE]"), `expected [DONE] in stream, got: ${text.slice(-200)}`);
+
+    // Server should still be healthy after the agent crash
+    const healthRes = await fetch(`${baseUrl}/health`);
+    assert.equal(healthRes.status, 200);
+  });
+
+  it("handles agent crash in non-streaming mode without server error", async () => {
+    const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "acp-mock",
+        messages: [{ role: "user", content: "crash" }],
+      }),
+    });
+    // Should return 200 with partial content, not 500
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      choices: Array<{ message: { content: string } }>;
+    };
+    assert.ok(
+      body.choices[0].message.content.includes("partial-before-crash"),
+      `expected partial text in response`,
     );
   });
 

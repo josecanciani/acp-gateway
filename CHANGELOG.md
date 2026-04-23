@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Agent crashes (ACP connection closed) no longer crash the gateway with `ERR_HTTP_HEADERS_SENT`. When an agent process dies mid-stream, the gateway now delivers any partial text already received, appends an error message, and terminates the SSE stream cleanly with `[DONE]`.
+- Streaming error handler now checks `res.headersSent` before attempting to send a JSON error response. If SSE headers were already flushed, the error is sent as an SSE event instead.
+
+### Changed
+- Agent process exit is now logged with the exit code and signal for easier debugging of agent crashes.
+
 ## [1.5.1] - 2026-04-23
 ### Fixed
 - Streaming endpoint now detects client disconnections and cleans up immediately: kills the agent process, stops the async generator, and closes the response. Previously, disconnected clients left generators spinning, agent processes alive, and sockets in CLOSE_WAIT state, eventually causing 100% CPU and total unresponsiveness.

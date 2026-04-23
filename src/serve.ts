@@ -179,12 +179,26 @@ app.post("/v1/chat/completions", async (req, res) => {
     }
   } catch (err) {
     console.error("[acp-gateway] Error:", err);
-    res.status(500).json({
-      error: {
-        message: String(err instanceof Error ? err.message : err),
-        type: "internal_error",
-      },
-    });
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: {
+          message: String(err instanceof Error ? err.message : err),
+          type: "internal_error",
+        },
+      });
+    } else {
+      // Streaming was already in progress — send error as SSE event
+      try {
+        const errMsg = String(err instanceof Error ? err.message : err);
+        res.write(
+          `data: ${JSON.stringify({ error: { message: errMsg, type: "stream_error" } })}\n\n`,
+        );
+        res.write("data: [DONE]\n\n");
+        res.end();
+      } catch {
+        // Client already disconnected
+      }
+    }
   }
 });
 

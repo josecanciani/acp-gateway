@@ -82,7 +82,11 @@ export interface StreamChunk {
     function: { name: string; arguments: string };
   }>;
   tool_use: null;
-  usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null;
+  usage: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  } | null;
 }
 
 export interface RunStreamResult {
@@ -135,7 +139,11 @@ export class Runtime {
         | Array<{
             id?: string;
             category?: string;
-            options?: Array<{ value: string; name: string; description?: string }>;
+            options?: Array<{
+              value: string;
+              name: string;
+              description?: string;
+            }>;
           }>
         | undefined;
       const modelConfig = configOptions?.find(
@@ -153,7 +161,13 @@ export class Runtime {
 
       // Fallback: legacy models.availableModels field
       const models = sessionData.models as
-        | { availableModels?: Array<{ modelId: string; name: string; description?: string }> }
+        | {
+            availableModels?: Array<{
+              modelId: string;
+              name: string;
+              description?: string;
+            }>;
+          }
         | undefined;
       if (!models?.availableModels?.length) return [];
 
@@ -247,7 +261,12 @@ export class Runtime {
     // Shared holder: the generator sets this when the agent is spawned.
     // The kill() function reads it to kill the agent directly.
     const agentRef: { current?: SpawnedAgent } = {};
-    const stream = this.runStreamInternal({ ...opts, cwd, client, agentRef });
+    const stream = this.runStreamInternal({
+      ...opts,
+      cwd,
+      client,
+      agentRef,
+    });
     const kill = () => {
       if (agentRef.current) killAgent(agentRef.current);
     };
@@ -299,7 +318,16 @@ export class Runtime {
       }),
     };
     activeAgents.add(agent);
-    agent.process.on("exit", () => activeAgents.delete(agent));
+    agent.process.on("exit", (code, signal) => {
+      activeAgents.delete(agent);
+      if (signal === "SIGKILL") {
+        log.debug(`agent process killed (${spec.bin})`);
+      } else if (code !== null && code !== 0) {
+        log.warn(`agent process exited with code ${code} (${spec.bin})`);
+      } else if (signal) {
+        log.warn(`agent process killed by ${signal} (${spec.bin})`);
+      }
+    });
     return agent;
   }
 
@@ -380,6 +408,7 @@ export class Runtime {
       throw new Error(`Failed to spawn agent "${spec.bin}": ${spawnError.message}`);
     }
 
+    let connectionLost = false;
     try {
       const input = Writable.toWeb(agent.process.stdin!) as WritableStream<Uint8Array>;
       const output = Readable.toWeb(agent.process.stdout!) as ReadableStream<Uint8Array>;
@@ -486,10 +515,28 @@ export class Runtime {
         };
       }
 
-      // Ensure prompt completes
-      await promptPromise;
+      // Ensure prompt completes — catch connection errors gracefully
+      // so already-streamed text reaches the client with a clean finish
+      // signal instead of crashing the HTTP handler mid-SSE.
+      try {
+        await promptPromise;
+      } catch (err) {
+        connectionLost = true;
+        log.warn(`agent connection lost: ${err instanceof Error ? err.message : err}`);
+      }
     } finally {
       killAgent(agent);
+    }
+
+    if (connectionLost) {
+      yield {
+        finish_reason: null,
+        index: 0,
+        is_finished: false,
+        text: "\n\n[Agent process ended unexpectedly]",
+        tool_use: null,
+        usage: null,
+      };
     }
 
     yield {

@@ -9,6 +9,7 @@
  *   - Contains "echo:"  -> echoes everything after "echo:" back
  *   - Contains "prompt:" -> echoes the full prompt text (for system prompt testing)
  *   - Contains "mcp-tool:" -> calls the named MCP tool (format: "mcp-tool: name args_json")
+ *   - Contains "crash"  -> sends partial text then exits abruptly (simulates agent death)
  *   - Contains "error"  -> throws an error during prompt
  *   - Contains "slow"   -> waits 2 s before responding
  *   - Contains "multi"  -> sends two message chunks
@@ -90,7 +91,11 @@ function connectMcpServer(config: {
   const rl = createInterface({ input: proc.stdout!, crlfDelay: Infinity });
   rl.on("line", (line) => {
     try {
-      const msg = JSON.parse(line.trim()) as { id?: number; result?: unknown; error?: unknown };
+      const msg = JSON.parse(line.trim()) as {
+        id?: number;
+        result?: unknown;
+        error?: unknown;
+      };
       if (msg.id !== undefined) {
         const pending = conn.pendingRequests.get(msg.id);
         if (pending) {
@@ -131,7 +136,11 @@ class MockAgent implements Agent {
   private connection: AgentSideConnection;
   private sessions = new Map<
     string,
-    { pendingPrompt: AbortController | null; cwd: string; mcpConnections: McpConnection[] }
+    {
+      pendingPrompt: AbortController | null;
+      cwd: string;
+      mcpConnections: McpConnection[];
+    }
   >();
 
   constructor(connection: AgentSideConnection) {
@@ -179,14 +188,22 @@ class MockAgent implements Agent {
       }
     }
 
-    this.sessions.set(sessionId, { pendingPrompt: null, cwd, mcpConnections });
+    this.sessions.set(sessionId, {
+      pendingPrompt: null,
+      cwd,
+      mcpConnections,
+    });
     return {
       sessionId,
       models: {
         currentModelId: "mock-model-a",
         availableModels: [
           { modelId: "mock-model-a", name: "Mock Model A" },
-          { modelId: "mock-model-b", name: "Mock Model B", description: "A test model" },
+          {
+            modelId: "mock-model-b",
+            name: "Mock Model B",
+            description: "A test model",
+          },
         ],
       },
     } as NewSessionResponse;
@@ -210,6 +227,13 @@ class MockAgent implements Agent {
     const text = extractPromptText(params.prompt);
 
     try {
+      if (text.includes("crash")) {
+        // Send partial text, then exit abruptly to simulate agent death
+        await this.sendText(params.sessionId, "partial-before-crash");
+        await new Promise((r) => setTimeout(r, 50));
+        process.exit(1);
+      }
+
       if (text.includes("error")) {
         throw new Error("mock agent error");
       }
@@ -263,7 +287,10 @@ class MockAgent implements Agent {
           // This will block forever because the bridge never responds
           // The gateway should kill us before the timeout
           try {
-            await mcpRequest(conn, "tools/call", { name: toolName, arguments: args });
+            await mcpRequest(conn, "tools/call", {
+              name: toolName,
+              arguments: args,
+            });
           } catch {
             // Expected: timeout or process killed
           }
@@ -286,8 +313,16 @@ class MockAgent implements Agent {
             rawInput: { path: permPath },
           },
           options: [
-            { kind: "allow_once", name: "Allow", optionId: "allow" },
-            { kind: "reject_once", name: "Reject", optionId: "reject" },
+            {
+              kind: "allow_once",
+              name: "Allow",
+              optionId: "allow",
+            },
+            {
+              kind: "reject_once",
+              name: "Reject",
+              optionId: "reject",
+            },
           ],
         });
         if (resp.outcome.outcome === "selected" && resp.outcome.optionId === "allow") {
