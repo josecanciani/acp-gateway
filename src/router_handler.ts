@@ -85,6 +85,8 @@ export interface StreamingContext {
   token: string;
   trackedFiles: () => TrackedFile[];
   workspaceDir: string;
+  /** Kill the agent process (e.g. on client disconnect). */
+  abort: () => void;
 }
 
 /**
@@ -189,6 +191,7 @@ export class RouterHandler {
       token: ws.token,
       trackedFiles: () => client.trackedFiles,
       workspaceDir: ws.dir,
+      abort: kill,
     };
 
     if (bridgeSetup) {
@@ -236,7 +239,10 @@ export class RouterHandler {
         // waiting for a tool response from the bridge.
         const result = await Promise.race([
           iterator.next().then((r) => ({ type: "chunk" as const, ...r })),
-          toolCallPromise.then((calls) => ({ type: "tools" as const, calls })),
+          toolCallPromise.then((calls) => ({
+            type: "tools" as const,
+            calls,
+          })),
         ]);
 
         if (result.type === "tools" && result.calls.length > 0) {
@@ -301,7 +307,11 @@ export class RouterHandler {
         text: textParts.join(""),
         tool_calls: openAIToolCalls,
         tool_use: null,
-        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        usage: {
+          prompt_tokens: 0,
+          completion_tokens: 0,
+          total_tokens: 0,
+        },
       };
     } else {
       // No tool calls — yield normal finish
@@ -311,7 +321,11 @@ export class RouterHandler {
         is_finished: true,
         text: "",
         tool_use: null,
-        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        usage: {
+          prompt_tokens: 0,
+          completion_tokens: 0,
+          total_tokens: 0,
+        },
       };
     }
   }
@@ -346,7 +360,11 @@ export class RouterHandler {
     const ws = this.workspaces.getOrCreate(context.conversationId);
     const allFiles = this.workspaces.listFiles(ws);
 
-    const message: { role: string; content: string; tool_calls?: OpenAIToolCall[] } = {
+    const message: {
+      role: string;
+      content: string;
+      tool_calls?: OpenAIToolCall[];
+    } = {
       role: "assistant",
       content: outputText,
     };

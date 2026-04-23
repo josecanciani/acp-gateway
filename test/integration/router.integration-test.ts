@@ -92,22 +92,50 @@ async function startServer(): Promise<void> {
         const model = body.model ?? "acp/mock";
         const { chunks, context } = handler.streamingWithContext(body, conversationId);
         res.setHeader("X-Conversation-Id", context.conversationId);
-        for await (const chunk of chunks) {
-          const sseData = {
-            id: `chatcmpl-${uuidv4()}`,
-            created: Math.floor(Date.now() / 1000),
-            model,
-            object: "chat.completion.chunk",
-            choices: [
-              chunk.is_finished
-                ? { finish_reason: "stop", index: 0, delta: {} }
-                : { index: 0, delta: { content: chunk.text, role: "assistant" } },
-            ],
-          };
-          res.write(`data: ${JSON.stringify(sseData)}\n\n`);
+
+        let clientGone = false;
+        res.on("close", () => {
+          if (!clientGone) {
+            clientGone = true;
+            context.abort();
+          }
+        });
+
+        try {
+          for await (const chunk of chunks) {
+            if (clientGone) break;
+            const sseData = {
+              id: `chatcmpl-${uuidv4()}`,
+              created: Math.floor(Date.now() / 1000),
+              model,
+              object: "chat.completion.chunk",
+              choices: [
+                chunk.is_finished
+                  ? {
+                      finish_reason: "stop",
+                      index: 0,
+                      delta: {},
+                    }
+                  : {
+                      index: 0,
+                      delta: {
+                        content: chunk.text,
+                        role: "assistant",
+                      },
+                    },
+              ],
+            };
+            res.write(`data: ${JSON.stringify(sseData)}\n\n`);
+          }
+        } catch (err) {
+          if (!clientGone) throw err;
         }
-        res.write("data: [DONE]\n\n");
-        res.end();
+
+        if (!clientGone) {
+          res.write("data: [DONE]\n\n");
+          res.end();
+          clientGone = true;
+        }
       } else {
         const response = await handler.completion(body, conversationId);
         res.setHeader("X-Conversation-Id", response.conversation_id ?? "");
@@ -127,32 +155,46 @@ async function startServer(): Promise<void> {
   app.get("/v1/artifacts/:token", (req, res) => {
     const ws = workspaces.getByToken(req.params.token);
     if (!ws) {
-      res
-        .status(404)
-        .json({ error: { message: "Workspace not found or expired", type: "not_found" } });
+      res.status(404).json({
+        error: {
+          message: "Workspace not found or expired",
+          type: "not_found",
+        },
+      });
       return;
     }
     const files = workspaces.listFiles(ws);
-    res.json({ conversation_id: ws.conversationId, files, base_url: `/v1/artifacts/${ws.token}` });
+    res.json({
+      conversation_id: ws.conversationId,
+      files,
+      base_url: `/v1/artifacts/${ws.token}`,
+    });
   });
 
   app.get("/v1/artifacts/:token{/*filepath}", (req, res) => {
     const ws = workspaces.getByToken(req.params.token);
     if (!ws) {
-      res
-        .status(404)
-        .json({ error: { message: "Workspace not found or expired", type: "not_found" } });
+      res.status(404).json({
+        error: {
+          message: "Workspace not found or expired",
+          type: "not_found",
+        },
+      });
       return;
     }
     const filePath = (req.params as unknown as Record<string, string | string[]>).filepath;
     const resolvedPath = Array.isArray(filePath) ? filePath.join("/") : (filePath ?? "");
     if (!resolvedPath) {
-      res.status(400).json({ error: { message: "File path required", type: "bad_request" } });
+      res.status(400).json({
+        error: { message: "File path required", type: "bad_request" },
+      });
       return;
     }
     const resolved = workspaces.resolveFilePath(ws, resolvedPath);
     if (!resolved) {
-      res.status(404).json({ error: { message: "File not found", type: "not_found" } });
+      res.status(404).json({
+        error: { message: "File not found", type: "not_found" },
+      });
       return;
     }
     createReadStream(resolved).pipe(res);
@@ -194,7 +236,9 @@ describe("ACP Router HTTP endpoints", () => {
 
   it("GET /v1/models lists adapter and discovered models", async () => {
     const res = await fetch(`${baseUrl}/v1/models`);
-    const body = (await res.json()) as { data: Array<{ id: string; owned_by: string }> };
+    const body = (await res.json()) as {
+      data: Array<{ id: string; owned_by: string }>;
+    };
     assert.equal(res.status, 200);
 
     // Should have the base adapter model plus discovered models
@@ -400,7 +444,11 @@ describe("ACP Router HTTP endpoints", () => {
     const body = (await res.json()) as Record<string, unknown>;
 
     assert.ok(body.artifacts, "expected artifacts in response");
-    const artifacts = body.artifacts as { token: string; files: string[]; base_url: string };
+    const artifacts = body.artifacts as {
+      token: string;
+      files: string[];
+      base_url: string;
+    };
     assert.ok(artifacts.token);
     assert.ok(
       artifacts.files.includes("hello.txt"),
@@ -473,7 +521,12 @@ describe("ACP Router HTTP endpoints", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model: "acp-mock",
-        messages: [{ role: "user", content: 'mcp-tool: read_file {"path": "src/app.ts"}' }],
+        messages: [
+          {
+            role: "user",
+            content: 'mcp-tool: read_file {"path": "src/app.ts"}',
+          },
+        ],
         tools: [
           {
             type: "function",
@@ -495,7 +548,11 @@ describe("ACP Router HTTP endpoints", () => {
 
     const choices = body.choices as Array<{
       finish_reason: string;
-      message: { tool_calls?: Array<{ function: { name: string; arguments: string } }> };
+      message: {
+        tool_calls?: Array<{
+          function: { name: string; arguments: string };
+        }>;
+      };
     }>;
     assert.equal(choices[0].finish_reason, "tool_calls");
     assert.ok(choices[0].message.tool_calls, "expected tool_calls in response");
@@ -572,5 +629,30 @@ describe("ACP Router HTTP endpoints", () => {
       !choices[0].message.tool_calls,
       "should not have tool_calls when agent doesn't call tools",
     );
+  });
+
+  it("handles client disconnect without hanging the server", async () => {
+    const controller = new AbortController();
+
+    // Start a streaming request with the slow mock (2 s delay)
+    const fetchPromise = fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "acp-mock",
+        stream: true,
+        messages: [{ role: "user", content: "slow" }],
+      }),
+      signal: controller.signal,
+    });
+
+    // Abort the request while the agent is still processing
+    await new Promise((r) => setTimeout(r, 500));
+    controller.abort();
+    await fetchPromise.catch(() => {});
+
+    // The server should still be responsive after the client disconnect
+    const healthRes = await fetch(`${baseUrl}/health`);
+    assert.equal(healthRes.status, 200);
   });
 });

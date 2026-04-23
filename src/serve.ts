@@ -93,42 +93,69 @@ app.post("/v1/chat/completions", async (req, res) => {
 
       res.setHeader("X-Conversation-Id", context.conversationId);
 
-      for await (const chunk of chunks) {
-        const sseData = {
-          id: `chatcmpl-${uuidv4()}`,
-          created: Math.floor(Date.now() / 1000),
-          model,
-          object: "chat.completion.chunk",
-          choices: [
-            chunk.is_finished
-              ? {
-                  finish_reason: chunk.finish_reason ?? "stop",
-                  index: 0,
-                  delta: chunk.tool_calls ? { tool_calls: chunk.tool_calls } : {},
-                }
-              : { index: 0, delta: { content: chunk.text, role: "assistant" } },
-          ],
-        };
-        res.write(`data: ${JSON.stringify(sseData)}\n\n`);
+      // Detect client disconnect and kill the agent process to prevent
+      // leaked generators, orphan agent processes, and CLOSE_WAIT sockets.
+      let clientGone = false;
+      res.on("close", () => {
+        if (!clientGone) {
+          clientGone = true;
+          log.debug("client disconnected during streaming, aborting agent");
+          context.abort();
+        }
+      });
+
+      try {
+        for await (const chunk of chunks) {
+          if (clientGone) break;
+          const sseData = {
+            id: `chatcmpl-${uuidv4()}`,
+            created: Math.floor(Date.now() / 1000),
+            model,
+            object: "chat.completion.chunk",
+            choices: [
+              chunk.is_finished
+                ? {
+                    finish_reason: chunk.finish_reason ?? "stop",
+                    index: 0,
+                    delta: chunk.tool_calls ? { tool_calls: chunk.tool_calls } : {},
+                  }
+                : {
+                    index: 0,
+                    delta: {
+                      content: chunk.text,
+                      role: "assistant",
+                    },
+                  },
+            ],
+          };
+          res.write(`data: ${JSON.stringify(sseData)}\n\n`);
+        }
+      } catch (err) {
+        // Swallow errors caused by killing the agent on client disconnect;
+        // re-throw genuine errors so the outer catch can handle them.
+        if (!clientGone) throw err;
       }
 
-      // After stream completes, send artifact info as a final SSE event
-      const ws = workspaces.getOrCreate(context.conversationId);
-      const allFiles = workspaces.listFiles(ws);
-      if (allFiles.length > 0) {
-        const artifactEvent = {
-          conversation_id: context.conversationId,
-          artifacts: {
-            token: context.token,
-            files: allFiles,
-            base_url: `/v1/artifacts/${context.token}`,
-          },
-        };
-        res.write(`data: ${JSON.stringify(artifactEvent)}\n\n`);
-      }
+      if (!clientGone) {
+        // After stream completes, send artifact info as a final SSE event
+        const ws = workspaces.getOrCreate(context.conversationId);
+        const allFiles = workspaces.listFiles(ws);
+        if (allFiles.length > 0) {
+          const artifactEvent = {
+            conversation_id: context.conversationId,
+            artifacts: {
+              token: context.token,
+              files: allFiles,
+              base_url: `/v1/artifacts/${context.token}`,
+            },
+          };
+          res.write(`data: ${JSON.stringify(artifactEvent)}\n\n`);
+        }
 
-      res.write("data: [DONE]\n\n");
-      res.end();
+        res.write("data: [DONE]\n\n");
+        res.end();
+        clientGone = true;
+      }
     } else {
       // Non-streaming response
       const response = await handler.completion(body, conversationId);
@@ -150,9 +177,12 @@ app.post("/v1/chat/completions", async (req, res) => {
 app.get("/v1/artifacts/:token", (req, res) => {
   const ws = workspaces.getByToken(req.params.token);
   if (!ws) {
-    res
-      .status(404)
-      .json({ error: { message: "Workspace not found or expired", type: "not_found" } });
+    res.status(404).json({
+      error: {
+        message: "Workspace not found or expired",
+        type: "not_found",
+      },
+    });
     return;
   }
 
@@ -168,22 +198,29 @@ app.get("/v1/artifacts/:token", (req, res) => {
 app.get("/v1/artifacts/:token{/*filepath}", (req, res) => {
   const ws = workspaces.getByToken(req.params.token);
   if (!ws) {
-    res
-      .status(404)
-      .json({ error: { message: "Workspace not found or expired", type: "not_found" } });
+    res.status(404).json({
+      error: {
+        message: "Workspace not found or expired",
+        type: "not_found",
+      },
+    });
     return;
   }
 
   const filePath = (req.params as unknown as Record<string, string | string[]>).filepath;
   const resolvedPath = Array.isArray(filePath) ? filePath.join("/") : (filePath ?? "");
   if (!resolvedPath) {
-    res.status(400).json({ error: { message: "File path required", type: "bad_request" } });
+    res.status(400).json({
+      error: { message: "File path required", type: "bad_request" },
+    });
     return;
   }
 
   const resolved = workspaces.resolveFilePath(ws, resolvedPath);
   if (!resolved) {
-    res.status(404).json({ error: { message: "File not found", type: "not_found" } });
+    res.status(404).json({
+      error: { message: "File not found", type: "not_found" },
+    });
     return;
   }
 
