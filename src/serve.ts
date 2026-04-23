@@ -95,14 +95,25 @@ app.post("/v1/chat/completions", async (req, res) => {
 
       // Detect client disconnect and kill the agent process to prevent
       // leaked generators, orphan agent processes, and CLOSE_WAIT sockets.
+      //
+      // Two mechanisms:
+      //  1. res 'close' — fires when the TCP connection actually closes
+      //     (client sends FIN/RST).
+      //  2. Write-buffer overflow — catches clients that stop reading
+      //     without closing (socket stays ESTABLISHED, common in Docker
+      //     networks). If the Node.js internal write buffer exceeds 1 MB,
+      //     the client is definitely not consuming data.
+      const WRITE_BUFFER_LIMIT = 1_048_576; // 1 MB
       let clientGone = false;
-      res.on("close", () => {
+      const abort = (reason: string) => {
         if (!clientGone) {
           clientGone = true;
-          log.debug("client disconnected during streaming, aborting agent");
+          log.debug(`client gone during streaming: ${reason}`);
           context.abort();
         }
-      });
+      };
+      res.on("close", () => abort("connection closed"));
+      res.on("error", () => abort("write error"));
 
       try {
         for await (const chunk of chunks) {
@@ -129,6 +140,10 @@ app.post("/v1/chat/completions", async (req, res) => {
             ],
           };
           res.write(`data: ${JSON.stringify(sseData)}\n\n`);
+          if (res.writableLength > WRITE_BUFFER_LIMIT) {
+            abort("write buffer overflow");
+            break;
+          }
         }
       } catch (err) {
         // Swallow errors caused by killing the agent on client disconnect;

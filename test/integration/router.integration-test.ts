@@ -93,13 +93,16 @@ async function startServer(): Promise<void> {
         const { chunks, context } = handler.streamingWithContext(body, conversationId);
         res.setHeader("X-Conversation-Id", context.conversationId);
 
+        const WRITE_BUFFER_LIMIT = 1_048_576;
         let clientGone = false;
-        res.on("close", () => {
+        const abort = () => {
           if (!clientGone) {
             clientGone = true;
             context.abort();
           }
-        });
+        };
+        res.on("close", abort);
+        res.on("error", abort);
 
         try {
           for await (const chunk of chunks) {
@@ -126,6 +129,10 @@ async function startServer(): Promise<void> {
               ],
             };
             res.write(`data: ${JSON.stringify(sseData)}\n\n`);
+            if (res.writableLength > WRITE_BUFFER_LIMIT) {
+              abort();
+              break;
+            }
           }
         } catch (err) {
           if (!clientGone) throw err;
