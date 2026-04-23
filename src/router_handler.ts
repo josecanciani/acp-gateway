@@ -237,18 +237,40 @@ export class RouterHandler {
         // Race the next stream chunk against tool call collection.
         // This ensures we break out promptly when the agent is stuck
         // waiting for a tool response from the bridge.
-        const result = await Promise.race([
-          iterator.next().then((r) => ({ type: "chunk" as const, ...r })),
-          toolCallPromise.then((calls) => ({
-            type: "tools" as const,
-            calls,
-          })),
-        ]);
+        //
+        // IMPORTANT: only race while toolCallPromise is still pending.
+        // Once it settles with empty calls, stop racing — an already-
+        // resolved promise wins Promise.race() every iteration as a
+        // microtask, creating an infinite spin loop that starves the
+        // event loop and makes the gateway unresponsive.
+        const nextChunk = iterator.next().then((r) => ({ type: "chunk" as const, ...r }));
+        const result = toolCallsReady
+          ? await nextChunk
+          : await Promise.race([
+              nextChunk,
+              toolCallPromise.then((calls) => ({
+                type: "tools" as const,
+                calls,
+              })),
+            ]);
 
         if (result.type === "tools" && result.calls.length > 0) {
           collectedToolCalls = result.calls;
           toolCallsDetected = true;
           break;
+        }
+
+        if (result.type === "tools") {
+          // Tool call promise resolved with no calls — stop racing it
+          // and just await the chunk that is already in-flight.
+          const chunkResult = await nextChunk;
+          if (chunkResult.done) break;
+          const chunk = chunkResult.value;
+          if (chunk.text) textParts.push(chunk.text);
+          if (!chunk.is_finished) {
+            yield chunk;
+          }
+          continue;
         }
 
         if (result.type === "chunk") {

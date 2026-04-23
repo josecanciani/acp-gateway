@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Streaming endpoint now detects client disconnections and cleans up immediately: kills the agent process, stops the async generator, and closes the response. Previously, disconnected clients left generators spinning, agent processes alive, and sockets in CLOSE_WAIT state, eventually causing 100% CPU and total unresponsiveness.
 - Streaming endpoint now aborts when the write buffer exceeds 1 MB, catching clients that stop reading without closing the TCP connection (common in Docker networks where containers disappear ungracefully).
+- Fix `Promise.race` spin loop in `wrapStreamWithBridge` that starved the event loop and caused 100% CPU. When `collectToolCalls` resolved with no calls, the already-settled promise won every race iteration as a microtask, creating an infinite loop. The race is now skipped once the tool call promise settles with empty results.
 
 ## [1.5.0] - 2026-04-19
 ### Added
